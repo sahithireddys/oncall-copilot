@@ -1,0 +1,11 @@
+# Route every alert to the copilot's webhook.
+route:
+  receiver: oncall-copilot
+  group_by: [alertname, service_name]
+  group_wait: 10s
+  repeat_interval: 1h
+receivers:
+- name: oncall-copilot
+  webhook_configs:
+  - url: http://host.docker.internal:8000/api/webhooks/alertmanager   # copilot running on your laptop
+    send_resolved: false

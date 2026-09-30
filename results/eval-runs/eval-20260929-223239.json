@@ -1,0 +1,98 @@
+[
+  {
+    "id": "a1a8c38f5c",
+    "created_at": "2026-09-30T02:32:08.349048+00:00",
+    "status": "completed",
+    "reasoner": "claude",
+    "requested_reasoner": "claude",
+    "model": "claude-sonnet-4-5",
+    "scenario_ids": [
+      "kafka-queue-problems",
+      "valkey-slow"
+    ],
+    "results": [
+      {
+        "scenario_id": "kafka-queue-problems",
+        "title": "Accounting consumer can't keep up with Kafka",
+        "difficulty": "medium",
+        "investigation_id": "5d0a2fcb8d65",
+        "status": "completed",
+        "duration_ms": 31240,
+        "grading": {
+          "service_correct": false,
+          "category_correct": false,
+          "correct": false,
+          "service_in_top3": true,
+          "score": 0.0,
+          "expected_service": "accounting",
+          "expected_category": "queue_backlog",
+          "predicted_service": "postgresql",
+          "predicted_category": "datastore_degradation",
+          "confidence": 0.85
+        },
+        "predicted": "postgresql/datastore_degradation",
+        "expected": "accounting/queue_backlog",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "valkey-slow",
+        "title": "Valkey (cart cache) responding slowly",
+        "difficulty": "medium",
+        "investigation_id": "1142420480a5",
+        "status": "completed",
+        "duration_ms": 29804,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "valkey-cart",
+          "expected_category": "datastore_degradation",
+          "predicted_service": "valkey-cart",
+          "predicted_category": "datastore_degradation",
+          "confidence": 0.88
+        },
+        "predicted": "valkey-cart/datastore_degradation",
+        "expected": "valkey-cart/datastore_degradation",
+        "reasoner_used": "claude",
+        "error": null
+      }
+    ],
+    "summary": {
+      "n": 2,
+      "completed": 2,
+      "accuracy": 0.5,
+      "service_accuracy": 0.5,
+      "category_accuracy": 0.5,
+      "service_recall_at_3": 1.0,
+      "mean_score": 0.5,
+      "median_time_to_hypothesis_ms": 30522,
+      "p95_time_to_hypothesis_ms": 29804,
+      "by_difficulty": {
+        "medium": {
+          "n": 2,
+          "accuracy": 0.5
+        }
+      },
+      "by_category": {
+        "datastore_degradation": {
+          "n": 1,
+          "accuracy": 1.0
+        },
+        "queue_backlog": {
+          "n": 1,
+          "accuracy": 0.0
+        }
+      },
+      "calibration": {
+        "confident_n": 2,
+        "confident_accuracy": 0.5,
+        "unsure_n": 0,
+        "unsure_accuracy": 0.0
+      }
+    },
+    "finished_at": "2026-09-30T02:32:39.594407+00:00"
+  }
+]

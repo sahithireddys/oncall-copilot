@@ -1,0 +1,497 @@
+# Incident catalog: 24 faults with known root causes, for the OpenTelemetry Demo (v2.x).
+#
+# Each scenario is used two ways:
+#   1. Simulated mode: copilot/providers/simulated.py turns `faults` + `noise` into
+#      realistic metrics/traces/logs/events so the agent can be evaluated offline.
+#   2. Live mode: chaos/inject.py applies `reproduce` against a real cluster running
+#      the demo, then fires the alert at the copilot's webhook.
+#
+# `noise` entries are red herrings (unrelated deploys, benign warnings, old restarts).
+# Flag names follow the demo's flagd config (kubectl -n otel-demo get cm flagd-config).
+
+scenarios:
+
+- id: payment-bad-deploy
+  title: Payment release throws on every other charge
+  description: payment v1.9.1 is rolled out and starts failing a large share of charges.
+  difficulty: easy
+  tags: [deploy, errors]
+  alert: {name: CheckoutHighErrorRate, service: checkout, severity: critical, summary: "checkout error rate > 5% for 5m"}
+  faults:
+    - {service: payment, type: bad_deploy, onset_min: -11, error_rate: 0.4, latency_ms: 20,
+       version_from: "1.9.0", version_to: "1.9.1",
+       error_message: "TypeError: Cannot read properties of undefined (reading 'units') at charge.js:41"}
+  noise:
+    - {type: deploy, service: email, at_min: -38, version_from: "1.9.0", version_to: "1.9.1"}
+    - {type: log_warn, service: checkout, at_min: -44, message: "shipping quote cache cold", count: 12}
+  ground_truth:
+    service: payment
+    category: bad_deploy
+    fix: kubectl -n otel-demo rollout undo deployment/payment
+    explanation: The payment rollout 11m before the alert introduced a TypeError; checkout surfaces the failures.
+  reproduce:
+    method: flagd
+    flag: paymentFailure
+    variant: "50%"
+    commands: ["kubectl -n otel-demo annotate deployment/payment kubernetes.io/change-cause='release 1.9.1' --overwrite",
+               "kubectl -n otel-demo rollout restart deployment/payment"]
+    notes: Rolls out payment and enables paymentFailure together so the change record lines up with the errors.
+
+- id: payment-failure-flag
+  title: Feature flag makes payment fail 25% of charges
+  difficulty: easy
+  tags: [feature-flag, errors]
+  alert: {name: CheckoutHighErrorRate, service: checkout, severity: critical, summary: "checkout error rate > 5% for 5m"}
+  faults:
+    - {service: payment, type: config_change, onset_min: -9, error_rate: 0.25,
+       config_resource: configmap/flagd-config, config_key: paymentFailure, config_old: "off", config_new: "25%",
+       error_message: "Payment request failed. Invalid token. app.loyalty.level=gold"}
+  noise:
+    - {type: deploy, service: ad, at_min: -26, version_from: "2.0.1", version_to: "2.0.2"}
+  ground_truth:
+    service: payment
+    category: config_change
+    fix: Set paymentFailure back to "off" in flagd
+  reproduce: {method: flagd, flag: paymentFailure, variant: "25%"}
+
+- id: checkout-payment-unreachable
+  title: Checkout points at a payment address that doesn't exist
+  description: A config change on checkout sets PAYMENT_ADDR to a non-existent host.
+  difficulty: medium
+  tags: [config, connectivity]
+  alert: {name: CheckoutHighErrorRate, service: checkout, severity: critical, summary: "checkout error rate > 5% for 5m"}
+  faults:
+    - {service: checkout, type: config_change, onset_min: -7, error_rate: 0.95,
+       config_resource: deployment/checkout, config_key: PAYMENT_ADDR, config_old: "payment:8080", config_new: "payment-v2:8080",
+       error_message: "failed to charge card: rpc error: code = Unavailable desc = dial tcp: lookup payment-v2: no such host"}
+  noise:
+    - {type: log_warn, service: payment, at_min: -40, message: "slow startup: loaded 3 card validators", count: 1}
+  ground_truth:
+    service: checkout
+    category: config_change
+    also_accept: [dependency_unavailable]
+    fix: kubectl -n otel-demo set env deployment/checkout PAYMENT_ADDR=payment:8080
+  reproduce:
+    method: flagd
+    flag: paymentUnreachable
+    variant: "on"
+
+- id: payment-scaled-to-zero
+  title: Payment deployment scaled to zero replicas
+  difficulty: medium
+  tags: [capacity, connectivity]
+  alert: {name: CheckoutHighErrorRate, service: checkout, severity: critical, summary: "checkout error rate > 5% for 5m"}
+  faults:
+    - {service: payment, type: dependency_unavailable, onset_min: -6,
+       error_message: "rpc error: code = Unavailable desc = connection refused (payment:8080)",
+       extra: {scaled_to_zero: true}}
+  noise:
+    - {type: deploy, service: shipping, at_min: -19, version_from: "2.0.1", version_to: "2.0.2"}
+  ground_truth:
+    service: payment
+    category: dependency_unavailable
+    fix: kubectl -n otel-demo scale deployment/payment --replicas=1
+  reproduce:
+    method: kubectl
+    commands: ["kubectl -n otel-demo scale deployment/payment --replicas=0"]
+    revert: ["kubectl -n otel-demo scale deployment/payment --replicas=1"]
+
+- id: cart-pool-exhaustion
+  title: Cart exhausts its Valkey connection pool
+  description: Pool size was left at 8 after a refactor; under normal load, cart waits for connections and times out.
+  difficulty: medium
+  tags: [redis, pool]
+  alert: {name: FrontendHighErrorRate, service: frontend, severity: critical, summary: "frontend 5xx ratio > 2% for 5m"}
+  faults:
+    - {service: cart, type: resource_exhaustion, onset_min: -14, error_rate: 0.22, latency_ms: 480,
+       error_message: "StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8"}
+  noise:
+    - {type: restart, service: valkey-cart, count: 1, message: "exit 137 during node drain"}
+    - {type: event, service: valkey-cart, at_min: -43, message: "Killing: Stopping container valkey-cart"}
+  ground_truth:
+    service: cart
+    category: resource_exhaustion
+    fix: Raise the cart Valkey pool size (and restart cart); Valkey itself is healthy
+  reproduce:
+    method: kubectl
+    commands: ["kubectl -n otel-demo set env deployment/cart VALKEY_POOL_SIZE=8",
+               "kubectl -n otel-demo scale deployment/load-generator --replicas=3"]
+    revert: ["kubectl -n otel-demo set env deployment/cart VALKEY_POOL_SIZE-",
+             "kubectl -n otel-demo scale deployment/load-generator --replicas=1"]
+    notes: If your cart build ignores VALKEY_POOL_SIZE, use Chaos Mesh to delay valkey-cart instead (see valkey-slow).
+
+- id: valkey-slow
+  title: Valkey (cart cache) responding slowly
+  difficulty: medium
+  tags: [redis, latency, datastore]
+  alert: {name: FrontendLatencyHigh, service: frontend, severity: warning, summary: "frontend p95 latency > 1s for 10m"}
+  faults:
+    - {service: valkey-cart, type: datastore_degradation, onset_min: -16, latency_ms: 850, error_rate: 0.02,
+       error_message: "BUSY Redis is busy running a script", extra: {cpu: 0.96}}
+  noise:
+    - {type: deploy, service: recommendation, at_min: -33, version_from: "2.0.1", version_to: "2.0.2"}
+  ground_truth:
+    service: valkey-cart
+    category: datastore_degradation
+    fix: Identify the blocking command (SLOWLOG GET) on valkey-cart; restart or fail over the cache
+  reproduce:
+    method: chaos-mesh
+    manifest: chaos/chaos-mesh/valkey-latency.yaml
+
+- id: recommendation-memory-leak
+  title: Recommendation cache leaks memory and gets OOMKilled
+  difficulty: easy
+  tags: [memory, oom]
+  alert: {name: FrontendHighErrorRate, service: frontend, severity: critical, summary: "frontend 5xx ratio > 2% for 5m"}
+  faults:
+    - {service: recommendation, type: memory_leak, onset_min: -32, latency_ms: 300,
+       error_message: "MemoryError: cache grew to 1.9GiB",
+       extra: {period_min: 7}}
+  noise:
+    - {type: log_warn, service: product-catalog, at_min: -30, message: "catalog reload took 2.1s", count: 1}
+  ground_truth:
+    service: recommendation
+    category: memory_leak
+    fix: kubectl -n otel-demo rollout restart deployment/recommendation, then disable recommendationCacheFailure / fix the unbounded cache
+  reproduce: {method: flagd, flag: recommendationCacheFailure, variant: "on"}
+
+- id: email-memory-leak
+  title: Email service leaks memory, slowing checkout
+  difficulty: medium
+  tags: [memory, oom, latency]
+  alert: {name: CheckoutLatencyHigh, service: checkout, severity: warning, summary: "checkout p95 latency > 1.5s for 10m"}
+  faults:
+    - {service: email, type: memory_leak, onset_min: -35, latency_ms: 1400,
+       error_message: "[FATAL] failed to allocate memory (NoMemoryError)", extra: {period_min: 9}}
+  noise:
+    - {type: deploy, service: checkout, at_min: -41, version_from: "2.0.1", version_to: "2.0.2"}
+  ground_truth:
+    service: email
+    category: memory_leak
+    fix: Restart email and disable emailMemoryLeak; add memory limit alerting
+  reproduce: {method: flagd, flag: emailMemoryLeak, variant: "100x"}
+
+- id: ad-high-cpu
+  title: Ad service CPU pinned at its limit
+  difficulty: easy
+  tags: [cpu, latency]
+  alert: {name: FrontendLatencyHigh, service: frontend, severity: warning, summary: "frontend p95 latency > 1s for 10m"}
+  faults:
+    - {service: ad, type: cpu_saturation, onset_min: -13, latency_ms: 1500, error_rate: 0.04,
+       error_message: "io.grpc.StatusRuntimeException: DEADLINE_EXCEEDED"}
+  ground_truth:
+    service: ad
+    category: cpu_saturation
+    fix: Disable adHighCpu; scale ad horizontally or raise its CPU limit
+  reproduce: {method: flagd, flag: adHighCpu, variant: "on"}
+
+- id: ad-failure-flag-with-deploy-noise
+  title: Ad failures right after an unrelated recommendation deploy
+  difficulty: medium
+  tags: [feature-flag, red-herring]
+  alert: {name: FrontendHighErrorRate, service: frontend, severity: critical, summary: "frontend 5xx ratio > 2% for 5m"}
+  faults:
+    - {service: ad, type: config_change, onset_min: -10, error_rate: 0.12,
+       config_resource: configmap/flagd-config, config_key: adFailure, config_old: "off", config_new: "on",
+       error_message: "io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag adFailure)"}
+  noise:
+    - {type: deploy, service: recommendation, at_min: -9, version_from: "2.0.2", version_to: "2.0.3"}
+  ground_truth:
+    service: ad
+    category: config_change
+    fix: Turn adFailure off in flagd
+  reproduce: {method: flagd, flag: adFailure, variant: "on", commands: ["kubectl -n otel-demo rollout restart deployment/recommendation"]}
+
+- id: product-catalog-flag
+  title: Product catalog fails for a single product
+  difficulty: medium
+  tags: [feature-flag, partial-failure]
+  alert: {name: FrontendHighErrorRate, service: frontend, severity: critical, summary: "frontend 5xx ratio > 2% for 5m"}
+  faults:
+    - {service: product-catalog, type: config_change, onset_min: -12, error_rate: 0.08,
+       config_resource: configmap/flagd-config, config_key: productCatalogFailure, config_old: "off", config_new: "on",
+       error_message: "Error: Product Catalog Fail Feature Flag Enabled (product OLJCESPC7Z)"}
+  noise:
+    - {type: log_error, service: currency, at_min: -40, message: "failed to refresh ECB rates, using cached", count: 2}
+  ground_truth:
+    service: product-catalog
+    category: config_change
+    fix: Turn productCatalogFailure off
+  reproduce: {method: flagd, flag: productCatalogFailure, variant: "on"}
+
+- id: product-catalog-slow-release
+  title: Product catalog release adds an N+1 query (frontend deploy is a red herring)
+  difficulty: hard
+  tags: [deploy, latency, red-herring]
+  alert: {name: FrontendLatencyHigh, service: frontend, severity: warning, summary: "frontend p95 latency > 1s for 10m"}
+  faults:
+    - {service: product-catalog, type: bad_deploy, onset_min: -17, latency_ms: 950, error_rate: 0.01,
+       version_from: "2.0.2", version_to: "2.0.3",
+       error_message: "context deadline exceeded while listing products"}
+  noise:
+    - {type: deploy, service: frontend, at_min: -8, version_from: "2.0.2", version_to: "2.0.3"}
+    - {type: log_warn, service: frontend, at_min: -8, message: "next.js build cache miss", count: 40}
+  ground_truth:
+    service: product-catalog
+    category: bad_deploy
+    fix: kubectl -n otel-demo rollout undo deployment/product-catalog
+  reproduce:
+    method: chaos-mesh
+    manifest: chaos/chaos-mesh/product-catalog-latency.yaml
+    commands: ["kubectl -n otel-demo rollout restart deployment/product-catalog", "kubectl -n otel-demo rollout restart deployment/frontend"]
+
+- id: postgres-slow-accounting-lag
+  title: Slow Postgres makes the accounting consumer fall behind
+  difficulty: hard
+  tags: [datastore, kafka, lag]
+  alert: {name: AccountingConsumerLagHigh, service: accounting, severity: warning, summary: "accounting consumer lag > 1000 messages"}
+  faults:
+    - {service: postgresql, type: datastore_degradation, onset_min: -18, latency_ms: 900, error_rate: 0.01,
+       error_message: "canceling statement due to statement timeout", extra: {cpu: 0.93}}
+  noise:
+    - {type: event, service: kafka, at_min: -25, message: "Rebalance: consumer group accounting rebalanced", count: 1}
+  ground_truth:
+    service: postgresql
+    category: datastore_degradation
+    fix: Find the long-running query / lock in pg_stat_activity; kill it or add the missing index
+  reproduce:
+    method: kubectl
+    commands: ["kubectl -n otel-demo exec deploy/postgresql -- psql -U root -d otel -c \"SELECT pg_sleep(1) FROM generate_series(1,10000)\" &"]
+    notes: Or use chaos/chaos-mesh/postgres-latency.yaml
+
+- id: kafka-queue-problems
+  title: Accounting consumer can't keep up with Kafka
+  difficulty: medium
+  tags: [kafka, lag]
+  alert: {name: AccountingConsumerLagHigh, service: accounting, severity: warning, summary: "accounting consumer lag > 1000 messages"}
+  faults:
+    - {service: accounting, type: queue_backlog, onset_min: -15, latency_ms: 450,
+       error_message: "Consumer poll interval exceeded; processing 1 message took 480ms"}
+  ground_truth:
+    service: accounting
+    category: queue_backlog
+    fix: Disable kafkaQueueProblems; scale accounting consumers to match partitions
+  reproduce: {method: flagd, flag: kafkaQueueProblems, variant: "on"}
+
+- id: fraud-detection-crashloop
+  title: Fraud detection crash-loops after a Kafka address change
+  difficulty: medium
+  tags: [crashloop, config, kafka]
+  alert: {name: FraudDetectionConsumerLagHigh, service: fraud-detection, severity: warning, summary: "fraud-detection consumer lag > 1000 messages"}
+  faults:
+    - {service: fraud-detection, type: crash_loop, onset_min: -14,
+       config_resource: deployment/fraud-detection, config_key: KAFKA_ADDR, config_old: "kafka:9092", config_new: "",
+       error_message: "Exception in thread main: java.lang.IllegalArgumentException: KAFKA_ADDR must be set"}
+  ground_truth:
+    service: fraud-detection
+    category: crash_loop
+    also_accept: [config_change]
+    fix: kubectl -n otel-demo set env deployment/fraud-detection KAFKA_ADDR=kafka:9092
+  reproduce:
+    method: kubectl
+    commands: ["kubectl -n otel-demo set env deployment/fraud-detection KAFKA_ADDR="]
+    revert: ["kubectl -n otel-demo set env deployment/fraud-detection KAFKA_ADDR=kafka:9092"]
+
+- id: currency-crashloop-release
+  title: Currency release crash-loops on start-up
+  difficulty: medium
+  tags: [crashloop, deploy]
+  alert: {name: FrontendHighErrorRate, service: frontend, severity: critical, summary: "frontend 5xx ratio > 2% for 5m"}
+  faults:
+    - {service: currency, type: crash_loop, onset_min: -8, version_from: "2.0.2", version_to: "2.0.3",
+       error_message: "terminate called after throwing an instance of 'std::runtime_error': missing currency_conversion.json"}
+  noise:
+    - {type: log_warn, service: ad, at_min: -30, message: "slow ad lookup (>200ms)", count: 18}
+  ground_truth:
+    service: currency
+    category: crash_loop
+    also_accept: [bad_deploy]
+    fix: kubectl -n otel-demo rollout undo deployment/currency
+  reproduce:
+    method: kubectl
+    commands: ["kubectl -n otel-demo patch deployment currency --type=json -p='[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/command\",\"value\":[\"sh\",\"-c\",\"echo missing currency_conversion.json; exit 1\"]}]'"]
+    revert: ["kubectl -n otel-demo rollout undo deployment/currency"]
+
+- id: quote-network-latency
+  title: Network latency between shipping and quote
+  difficulty: medium
+  tags: [network, latency]
+  alert: {name: ShippingLatencyHigh, service: shipping, severity: warning, summary: "shipping p95 latency > 1s for 10m"}
+  faults:
+    - {service: quote, type: network_latency, onset_min: -12, latency_ms: 1600, error_rate: 0.15,
+       error_message: "cURL error 28: Operation timed out after 2000 milliseconds"}
+  ground_truth:
+    service: quote
+    category: network_latency
+    fix: Remove the NetworkChaos / investigate the node's network; quote's own CPU and latency are normal
+  reproduce: {method: chaos-mesh, manifest: chaos/chaos-mesh/quote-network-delay.yaml}
+
+- id: cart-readiness-probe
+  title: Cart readiness probe fails, half its endpoints are pulled
+  difficulty: medium
+  tags: [probe, availability]
+  alert: {name: FrontendHighErrorRate, service: frontend, severity: critical, summary: "frontend 5xx ratio > 2% for 5m"}
+  faults:
+    - {service: cart, type: probe_failure, onset_min: -9, error_rate: 0.5,
+       error_message: "upstream connect error or disconnect/reset before headers. reset reason: connection failure",
+       extra: {log: "health check /readyz returned 503: warming up"}}
+  noise:
+    - {type: deploy, service: currency, at_min: -24, version_from: "2.0.2", version_to: "2.0.3"}
+  ground_truth:
+    service: cart
+    category: probe_failure
+    fix: Disable failedReadinessProbe / fix the readiness endpoint; check the probe thresholds
+  reproduce: {method: flagd, flag: failedReadinessProbe, variant: "on"}
+
+- id: checkout-memory-leak-payment-noise
+  title: Checkout leaks memory; a payment deploy 6 minutes earlier is a red herring
+  difficulty: hard
+  tags: [memory, red-herring]
+  alert: {name: CheckoutHighErrorRate, service: checkout, severity: critical, summary: "checkout error rate > 5% for 5m"}
+  faults:
+    - {service: checkout, type: memory_leak, onset_min: -30, latency_ms: 500,
+       error_message: "fatal error: runtime: out of memory", extra: {period_min: 6}}
+  noise:
+    - {type: deploy, service: payment, at_min: -6, version_from: "1.9.0", version_to: "1.9.1"}
+    - {type: log_warn, service: payment, at_min: -6, message: "feature flag client reconnecting", count: 3}
+  ground_truth:
+    service: checkout
+    category: memory_leak
+    fix: Restart checkout and roll back to the last build without the leak; capture a heap profile first
+  reproduce:
+    method: kubectl
+    commands: ["kubectl -n otel-demo set resources deployment/checkout --limits=memory=40Mi", "kubectl -n otel-demo rollout restart deployment/payment"]
+    revert: ["kubectl -n otel-demo rollout undo deployment/checkout"]
+
+- id: image-provider-slow
+  title: Image provider injects a delay into every image
+  difficulty: easy
+  tags: [latency, network]
+  alert: {name: FrontendProxyLatencyHigh, service: frontend-proxy, severity: warning, summary: "frontend-proxy p95 latency > 1s for 10m"}
+  faults:
+    - {service: image-provider, type: network_latency, onset_min: -10, latency_ms: 5000,
+       error_message: "upstream request timeout"}
+  ground_truth:
+    service: image-provider
+    category: network_latency
+    fix: Disable imageSlowLoad (Envoy fault injection on image-provider)
+  reproduce: {method: flagd, flag: imageSlowLoad, variant: "5sec"}
+
+- id: shipping-bad-quote-addr
+  title: Shipping config points at the wrong quote service
+  difficulty: medium
+  tags: [config, connectivity]
+  alert: {name: CheckoutHighErrorRate, service: checkout, severity: critical, summary: "checkout error rate > 5% for 5m"}
+  faults:
+    - {service: shipping, type: config_change, onset_min: -8, error_rate: 0.9,
+       config_resource: deployment/shipping, config_key: QUOTE_ADDR, config_old: "http://quote:8080", config_new: "http://quote-svc:8080",
+       error_message: "failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error"}
+  noise:
+    - {type: deploy, service: email, at_min: -15, version_from: "2.0.2", version_to: "2.0.3"}
+  ground_truth:
+    service: shipping
+    category: config_change
+    also_accept: [dependency_unavailable]
+    fix: kubectl -n otel-demo set env deployment/shipping QUOTE_ADDR=http://quote:8080
+  reproduce:
+    method: kubectl
+    commands: ["kubectl -n otel-demo set env deployment/shipping QUOTE_ADDR=http://quote-svc:8080"]
+    revert: ["kubectl -n otel-demo set env deployment/shipping QUOTE_ADDR=http://quote:8080"]
+
+- id: payment-cpu-limit
+  title: Payment CPU limit cut to 50m, requests queue up
+  difficulty: medium
+  tags: [cpu, config]
+  alert: {name: CheckoutLatencyHigh, service: checkout, severity: warning, summary: "checkout p95 latency > 1.5s for 10m"}
+  faults:
+    - {service: payment, type: cpu_saturation, onset_min: -15, latency_ms: 1900, error_rate: 0.03,
+       config_resource: deployment/payment, config_key: resources.limits.cpu, config_old: "500m", config_new: "50m",
+       error_message: "request aborted: deadline exceeded"}
+  ground_truth:
+    service: payment
+    category: cpu_saturation
+    also_accept: [config_change]
+    fix: kubectl -n otel-demo set resources deployment/payment --limits=cpu=500m
+  reproduce:
+    method: kubectl
+    commands: ["kubectl -n otel-demo set resources deployment/payment --limits=cpu=50m"]
+    revert: ["kubectl -n otel-demo set resources deployment/payment --limits=cpu=500m"]
+
+- id: product-catalog-oom
+  title: Product catalog OOMKilled under a smaller memory limit
+  difficulty: medium
+  tags: [memory, oom, red-herring]
+  alert: {name: FrontendHighErrorRate, service: frontend, severity: critical, summary: "frontend 5xx ratio > 2% for 5m"}
+  faults:
+    - {service: product-catalog, type: memory_leak, onset_min: -28, latency_ms: 150,
+       error_message: "fatal error: runtime: out of memory", extra: {period_min: 5}}
+  noise:
+    - {type: deploy, service: frontend, at_min: -21, version_from: "2.0.2", version_to: "2.0.3"}
+  ground_truth:
+    service: product-catalog
+    category: memory_leak
+    fix: Restore the product-catalog memory limit and find the allocation growth (pprof heap)
+  reproduce:
+    method: kubectl
+    commands: ["kubectl -n otel-demo set resources deployment/product-catalog --limits=memory=12Mi"]
+    revert: ["kubectl -n otel-demo rollout undo deployment/product-catalog"]
+
+- id: currency-latency-regression
+  title: Currency release makes every conversion ~900ms slower (no errors)
+  difficulty: hard
+  tags: [deploy, latency, red-herring]
+  alert: {name: FrontendLatencyHigh, service: frontend, severity: warning, summary: "frontend p95 latency > 1s for 10m"}
+  faults:
+    - {service: currency, type: bad_deploy, onset_min: -19, latency_ms: 900, error_rate: 0.0,
+       version_from: "2.0.2", version_to: "2.0.4",
+       error_message: "conversion took longer than expected"}
+  noise:
+    - {type: config_change, service: cart, at_min: -7, message: configmap/cart-config, config_key: CART_TTL_SECONDS, config_old: "3600", config_new: "1800"}
+    - {type: log_warn, service: ad, at_min: -20, message: "slow ad lookup (>200ms)", count: 25}
+  ground_truth:
+    service: currency
+    category: bad_deploy
+    fix: kubectl -n otel-demo rollout undo deployment/currency
+  reproduce:
+    method: chaos-mesh
+    manifest: chaos/chaos-mesh/currency-latency.yaml
+    commands: ["kubectl -n otel-demo rollout restart deployment/currency"]
+
+- id: fraud-detection-slow-leak
+  title: Fraud detection leaks memory slowly - GC thrash, no OOM yet
+  description: Heap grows for 25 minutes; the JVM spends more and more time in GC, so each message takes longer and lag builds. No pod has been killed yet.
+  difficulty: hard
+  tags: [memory, kafka, lag, no-oom]
+  alert: {name: FraudDetectionConsumerLagHigh, service: fraud-detection, severity: warning, summary: "fraud-detection consumer lag > 1000 messages"}
+  faults:
+    - {service: fraud-detection, type: memory_leak, onset_min: -25, latency_ms: 700,
+       error_message: "java.lang.OutOfMemoryError: GC overhead limit exceeded", extra: {period_min: 34}}
+  noise:
+    - {type: deploy, service: accounting, at_min: -12, version_from: "2.0.2", version_to: "2.0.3"}
+  ground_truth:
+    service: fraud-detection
+    category: memory_leak
+    fix: Take a heap dump, then restart fraud-detection before it OOMs; fix the retained-object growth
+  reproduce:
+    method: kubectl
+    commands: ["kubectl -n otel-demo set env deployment/fraud-detection JAVA_TOOL_OPTIONS=-Xmx96m"]
+    revert: ["kubectl -n otel-demo set env deployment/fraud-detection JAVA_TOOL_OPTIONS-"]
+
+- id: frontend-bad-deploy
+  title: Frontend release breaks product pages for some currencies
+  difficulty: medium
+  tags: [deploy, red-herring]
+  alert: {name: FrontendProxyHighErrorRate, service: frontend-proxy, severity: critical, summary: "frontend-proxy 5xx ratio > 2% for 5m"}
+  faults:
+    - {service: frontend, type: bad_deploy, onset_min: -9, error_rate: 0.07, latency_ms: 10,
+       version_from: "2.0.3", version_to: "2.0.4",
+       error_message: "TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22"}
+  noise:
+    - {type: config_change, service: currency, at_min: -5, message: configmap/currency-config, config_key: DEFAULT_CURRENCY, config_old: "USD", config_new: "USD"}
+  ground_truth:
+    service: frontend
+    category: bad_deploy
+    fix: kubectl -n otel-demo rollout undo deployment/frontend
+  reproduce:
+    method: manual
+    notes: Build a frontend image with the null-check removed in ProductPrice and roll it out.

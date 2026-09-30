@@ -1,0 +1,2532 @@
+{
+  "id": "768d6adab38e",
+  "alert": {
+    "name": "FrontendHighErrorRate",
+    "service": "frontend",
+    "severity": "critical",
+    "summary": "frontend 5xx ratio > 2% for 5m",
+    "labels": {
+      "scenario_id": "ad-failure-flag-with-deploy-noise"
+    },
+    "starts_at": "2026-09-30T02:50:22.024403Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "ad-failure-flag-with-deploy-noise",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:50:22.024485Z",
+  "completed_at": "2026-09-30T02:50:51.466651Z",
+  "duration_ms": 29441,
+  "hypothesis": {
+    "root_cause_service": "ad",
+    "category": "config_change",
+    "title": "ad service adFailure flag enabled, injecting UNAVAILABLE errors into frontend",
+    "summary": "The adFailure feature flag in configmap/flagd-config was changed from 'off' to 'on' 10 minutes before the alert. This caused the ad service to inject UNAVAILABLE errors (12.5% error rate), which propagate to frontend as 5xx responses (4.6% error rate). 89% of failing frontend traces terminate in ad with \"ad service failure (flag adFailure)\". Ad's own resource metrics (CPU, memory, latency) remain healthy, confirming the flag is the direct cause.",
+    "reasoning": "The alert fired on frontend 5xx errors at 02:50. Tracing the errors upstream: 89% of failing frontend traces end in the ad service with \"UNAVAILABLE: ad service failure (flag adFailure)\". The ad service itself shows a sharp error rate spike from 0.4% to 12.5% starting around -10m, with 1,296 error logs citing the same flag-driven failure. The critical timing evidence is the config change: configmap/flagd-config changed adFailure from 'off' to 'on' 10 minutes before the alert, which aligns perfectly with when ad errors and frontend errors both began. Ad's own CPU, memory, and latency metrics remain healthy (CPU ~23%, memory ~58%, p95 latency ~29ms), ruling out resource saturation or performance degradation. The recommendation 2.0.2\u21922.0.3 deploy at -9m and product-catalog 2.0.2\u21922.0.3 deploy at -14m are red herrings: recommendation is not on the failing trace paths (only 1 of 9 failing traces touched currency, none touched recommendation), and product-catalog's own metrics show no anomalies. The runbook RB-flagd confirms that adFailure is a known failure-injection flag. This is a config_change in the ad service that deliberately injects UNAVAILABLE errors, propagating upstream to frontend.",
+    "confidence": 0.95,
+    "supporting_evidence": [
+      {
+        "evidence_id": "changes:ad:config:0",
+        "why_it_matters": "ConfigMap flagd-config changed adFailure from 'off' to 'on' exactly 10 minutes before the alert, matching the timing of the error spike in ad and frontend."
+      },
+      {
+        "evidence_id": "logs:ad:1",
+        "why_it_matters": "1,296 ERROR logs in ad explicitly cite 'ad service failure (flag adFailure)', confirming the flag is actively injecting failures."
+      },
+      {
+        "evidence_id": "traces:frontend:f4f2f6f81d83",
+        "why_it_matters": "Failing trace shows the error originates in ad (UNAVAILABLE: ad service failure flag adFailure) and propagates to frontend, establishing the causal chain."
+      },
+      {
+        "evidence_id": "metrics:ad:error_rate",
+        "why_it_matters": "Ad error rate jumped from 0.4% to 12.5% at -10m, coinciding with the config change and proving ad is the source of errors, not a victim."
+      },
+      {
+        "evidence_id": "traces:frontend:summary",
+        "why_it_matters": "89% (8 of 9) of failing frontend traces end in ad, confirming ad is the dominant error origin and not a symptom of another service."
+      },
+      {
+        "evidence_id": "logs:frontend:1",
+        "why_it_matters": "1,101 frontend errors calling ad with the same flag-driven message show the error propagation from ad to frontend at scale."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Revert the adFailure flag to 'off' in flagd-config",
+        "command": "kubectl -n otel-demo get cm flagd-config -o yaml | sed 's/\"adFailure\": \"on\"/\"adFailure\": \"off\"/' | kubectl apply -f -",
+        "risk": "low",
+        "rationale": "The adFailure flag is directly injecting UNAVAILABLE errors. Reverting it to 'off' will immediately stop the error injection. This is the safest and fastest mitigation."
+      },
+      {
+        "title": "Verify flagd-config rollout and monitor ad error rate",
+        "command": "kubectl -n otel-demo get cm flagd-config -o jsonpath='{.data.demo\\.flagd\\.json}' | jq '.flags.adFailure' && kubectl -n otel-demo logs -l app=ad --tail=50 | grep -i error",
+        "risk": "low",
+        "rationale": "Confirm the flag has been reverted and check that ad error logs stop appearing. Monitor ad error rate metric to confirm it returns to baseline (~0.4%)."
+      }
+    ],
+    "related_documents": [
+      "RB-flagd"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "recommendation",
+        "category": "bad_deploy",
+        "why_less_likely": "Recommendation deployed 2.0.2\u21922.0.3 at -9m, but only 1 of 9 failing frontend traces touched currency (not recommendation), and recommendation is not on the call path for the 89% of traces failing in ad. No evidence of errors or anomalies in recommendation's own telemetry."
+      },
+      {
+        "root_cause_service": "product-catalog",
+        "category": "bad_deploy",
+        "why_less_likely": "Product-catalog deployed 2.0.2\u21922.0.3 at -14m, but there are no error logs, metric spikes, or failing traces involving product-catalog. The timing also predates the error spike by 4 minutes, and product-catalog is not on the failing trace paths."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:ad:config:0",
+      "source": "changes",
+      "service": "ad",
+      "title": "configmap/flagd-config: adFailure changed 'off' \u2192 'on' (10m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "config_change",
+        "resource": "configmap/flagd-config",
+        "key": "adFailure",
+        "old": "off",
+        "new": "on",
+        "minutes_before_alert": 10.5,
+        "affects": "ad"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:product-catalog:deploy:2",
+      "source": "changes",
+      "service": "product-catalog",
+      "title": "deployment/product-catalog rolled out 2.0.2 \u2192 2.0.3 (14m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/product-catalog",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 13.9
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:recommendation:deploy:1",
+      "source": "changes",
+      "service": "recommendation",
+      "title": "deployment/recommendation rolled out 2.0.2 \u2192 2.0.3 (9m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/recommendation",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 9.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:ad:1",
+      "source": "logs",
+      "service": "ad",
+      "title": "1,296\u00d7 ERROR io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag adFailure)",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag adFailure)",
+        "level": "ERROR",
+        "count": 1296,
+        "sample": "io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag adFailure) (trace_id=\u2026)",
+        "first_seen_min": -10.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:ad:2",
+      "source": "logs",
+      "service": "ad",
+      "title": "9\u00d7 WARN GC pause 120ms (G1 Young Generation)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "GC pause 120ms (G1 Young Generation)",
+        "level": "WARN",
+        "count": 9,
+        "sample": "GC pause 120ms (G1 Young Generation)",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:1",
+      "source": "logs",
+      "service": "frontend",
+      "title": "1,101\u00d7 ERROR failed calling ad: io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag a",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "failed calling ad: io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag adFailure)",
+        "level": "ERROR",
+        "count": 1101,
+        "sample": "failed calling ad: io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag adFailure)",
+        "first_seen_min": -10.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:2",
+      "source": "logs",
+      "service": "frontend",
+      "title": "14\u00d7 WARN slow render for /product/{id} (>500ms)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "slow render for /product/{id} (>500ms)",
+        "level": "WARN",
+        "count": 14,
+        "sample": "slow render for /product/{id} (>500ms)",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:ad:cpu_utilization",
+      "source": "metrics",
+      "service": "ad",
+      "title": "ad cpu utilization: 23.1% \u2192 23.1% (peak 27.7%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2292
+          ],
+          [
+            -44,
+            0.2449
+          ],
+          [
+            -43,
+            0.2198
+          ],
+          [
+            -42,
+            0.2464
+          ],
+          [
+            -41,
+            0.2251
+          ],
+          [
+            -40,
+            0.2307
+          ],
+          [
+            -39,
+            0.2437
+          ],
+          [
+            -38,
+            0.2492
+          ],
+          [
+            -37,
+            0.2261
+          ],
+          [
+            -36,
+            0.2164
+          ],
+          [
+            -35,
+            0.2516
+          ],
+          [
+            -34,
+            0.2384
+          ],
+          [
+            -33,
+            0.2408
+          ],
+          [
+            -32,
+            0.2502
+          ],
+          [
+            -31,
+            0.2394
+          ],
+          [
+            -30,
+            0.2565
+          ],
+          [
+            -29,
+            0.2585
+          ],
+          [
+            -28,
+            0.2298
+          ],
+          [
+            -27,
+            0.2514
+          ],
+          [
+            -26,
+            0.2293
+          ],
+          [
+            -25,
+            0.2591
+          ],
+          [
+            -24,
+            0.2641
+          ],
+          [
+            -23,
+            0.2333
+          ],
+          [
+            -22,
+            0.2311
+          ],
+          [
+            -21,
+            0.2295
+          ],
+          [
+            -20,
+            0.249
+          ],
+          [
+            -19,
+            0.246
+          ],
+          [
+            -18,
+            0.2218
+          ],
+          [
+            -17,
+            0.2353
+          ],
+          [
+            -16,
+            0.2556
+          ],
+          [
+            -15,
+            0.2308
+          ],
+          [
+            -14,
+            0.2511
+          ],
+          [
+            -13,
+            0.234
+          ],
+          [
+            -12,
+            0.2329
+          ],
+          [
+            -11,
+            0.2489
+          ],
+          [
+            -10,
+            0.2422
+          ],
+          [
+            -9,
+            0.2539
+          ],
+          [
+            -8,
+            0.2387
+          ],
+          [
+            -7,
+            0.2767
+          ],
+          [
+            -6,
+            0.2445
+          ],
+          [
+            -5,
+            0.2155
+          ],
+          [
+            -4,
+            0.2327
+          ],
+          [
+            -3,
+            0.2459
+          ],
+          [
+            -2,
+            0.2331
+          ],
+          [
+            -1,
+            0.2392
+          ],
+          [
+            0,
+            0.2169
+          ]
+        ],
+        "baseline": 0.2307,
+        "current": 0.2306,
+        "peak": 0.2767
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:ad:error_rate",
+      "source": "metrics",
+      "service": "ad",
+      "title": "ad error rate: 0.4% \u2192 12.5%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0038
+          ],
+          [
+            -44,
+            0.0033
+          ],
+          [
+            -43,
+            0.0038
+          ],
+          [
+            -42,
+            0.0039
+          ],
+          [
+            -41,
+            0.0048
+          ],
+          [
+            -40,
+            0.0044
+          ],
+          [
+            -39,
+            0.0043
+          ],
+          [
+            -38,
+            0.0039
+          ],
+          [
+            -37,
+            0.0031
+          ],
+          [
+            -36,
+            0.0039
+          ],
+          [
+            -35,
+            0.0037
+          ],
+          [
+            -34,
+            0.0037
+          ],
+          [
+            -33,
+            0.0044
+          ],
+          [
+            -32,
+            0.004
+          ],
+          [
+            -31,
+            0.0035
+          ],
+          [
+            -30,
+            0.0039
+          ],
+          [
+            -29,
+            0.0034
+          ],
+          [
+            -28,
+            0.0031
+          ],
+          [
+            -27,
+            0.0039
+          ],
+          [
+            -26,
+            0.004
+          ],
+          [
+            -25,
+            0.004
+          ],
+          [
+            -24,
+            0.0038
+          ],
+          [
+            -23,
+            0.004
+          ],
+          [
+            -22,
+            0.004
+          ],
+          [
+            -21,
+            0.0037
+          ],
+          [
+            -20,
+            0.0047
+          ],
+          [
+            -19,
+            0.0044
+          ],
+          [
+            -18,
+            0.0041
+          ],
+          [
+            -17,
+            0.0037
+          ],
+          [
+            -16,
+            0.0038
+          ],
+          [
+            -15,
+            0.0041
+          ],
+          [
+            -14,
+            0.0045
+          ],
+          [
+            -13,
+            0.0038
+          ],
+          [
+            -12,
+            0.0053
+          ],
+          [
+            -11,
+            0.004
+          ],
+          [
+            -10,
+            0.0056
+          ],
+          [
+            -9,
+            0.0541
+          ],
+          [
+            -8,
+            0.1135
+          ],
+          [
+            -7,
+            0.14
+          ],
+          [
+            -6,
+            0.0971
+          ],
+          [
+            -5,
+            0.1305
+          ],
+          [
+            -4,
+            0.1202
+          ],
+          [
+            -3,
+            0.0975
+          ],
+          [
+            -2,
+            0.1396
+          ],
+          [
+            -1,
+            0.1412
+          ],
+          [
+            0,
+            0.1205
+          ]
+        ],
+        "baseline": 0.0039,
+        "current": 0.1249,
+        "peak": 0.1412
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:ad:memory_utilization",
+      "source": "metrics",
+      "service": "ad",
+      "title": "ad memory utilization: 58.1% \u2192 57.8% (peak 60.2%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.5687
+          ],
+          [
+            -44,
+            0.5688
+          ],
+          [
+            -43,
+            0.5749
+          ],
+          [
+            -42,
+            0.5878
+          ],
+          [
+            -41,
+            0.5814
+          ],
+          [
+            -40,
+            0.5989
+          ],
+          [
+            -39,
+            0.5564
+          ],
+          [
+            -38,
+            0.578
+          ],
+          [
+            -37,
+            0.5916
+          ],
+          [
+            -36,
+            0.59
+          ],
+          [
+            -35,
+            0.5839
+          ],
+          [
+            -34,
+            0.5696
+          ],
+          [
+            -33,
+            0.6018
+          ],
+          [
+            -32,
+            0.5826
+          ],
+          [
+            -31,
+            0.5884
+          ],
+          [
+            -30,
+            0.5798
+          ],
+          [
+            -29,
+            0.5621
+          ],
+          [
+            -28,
+            0.571
+          ],
+          [
+            -27,
+            0.5844
+          ],
+          [
+            -26,
+            0.5774
+          ],
+          [
+            -25,
+            0.5683
+          ],
+          [
+            -24,
+            0.5649
+          ],
+          [
+            -23,
+            0.5847
+          ],
+          [
+            -22,
+            0.5857
+          ],
+          [
+            -21,
+            0.5892
+          ],
+          [
+            -20,
+            0.5822
+          ],
+          [
+            -19,
+            0.5891
+          ],
+          [
+            -18,
+            0.5672
+          ],
+          [
+            -17,
+            0.584
+          ],
+          [
+            -16,
+            0.5729
+          ],
+          [
+            -15,
+            0.5802
+          ],
+          [
+            -14,
+            0.577
+          ],
+          [
+            -13,
+            0.5872
+          ],
+          [
+            -12,
+            0.5689
+          ],
+          [
+            -11,
+            0.5736
+          ],
+          [
+            -10,
+            0.5838
+          ],
+          [
+            -9,
+            0.5692
+          ],
+          [
+            -8,
+            0.5661
+          ],
+          [
+            -7,
+            0.5763
+          ],
+          [
+            -6,
+            0.5789
+          ],
+          [
+            -5,
+            0.5829
+          ],
+          [
+            -4,
+            0.5677
+          ],
+          [
+            -3,
+            0.5873
+          ],
+          [
+            -2,
+            0.5667
+          ],
+          [
+            -1,
+            0.5802
+          ],
+          [
+            0,
+            0.5832
+          ]
+        ],
+        "baseline": 0.5814,
+        "current": 0.578,
+        "peak": 0.6018
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:ad:p95_latency_ms",
+      "source": "metrics",
+      "service": "ad",
+      "title": "ad p95 latency ms: 30ms \u2192 29ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            30.2958
+          ],
+          [
+            -44,
+            31.1969
+          ],
+          [
+            -43,
+            32.0073
+          ],
+          [
+            -42,
+            33.2636
+          ],
+          [
+            -41,
+            30.2471
+          ],
+          [
+            -40,
+            27.5815
+          ],
+          [
+            -39,
+            31.2367
+          ],
+          [
+            -38,
+            28.9839
+          ],
+          [
+            -37,
+            27.916
+          ],
+          [
+            -36,
+            32.4148
+          ],
+          [
+            -35,
+            28.7222
+          ],
+          [
+            -34,
+            30.8238
+          ],
+          [
+            -33,
+            28.4437
+          ],
+          [
+            -32,
+            29.934
+          ],
+          [
+            -31,
+            31.0755
+          ],
+          [
+            -30,
+            33.1627
+          ],
+          [
+            -29,
+            29.8726
+          ],
+          [
+            -28,
+            29.1459
+          ],
+          [
+            -27,
+            29.1229
+          ],
+          [
+            -26,
+            31.2074
+          ],
+          [
+            -25,
+            28.3731
+          ],
+          [
+            -24,
+            32.9222
+          ],
+          [
+            -23,
+            28.5705
+          ],
+          [
+            -22,
+            28.6198
+          ],
+          [
+            -21,
+            29.7107
+          ],
+          [
+            -20,
+            26.3984
+          ],
+          [
+            -19,
+            31.3058
+          ],
+          [
+            -18,
+            28.9252
+          ],
+          [
+            -17,
+            28.5283
+          ],
+          [
+            -16,
+            31.7726
+          ],
+          [
+            -15,
+            30.6305
+          ],
+          [
+            -14,
+            31.6163
+          ],
+          [
+            -13,
+            29.8023
+          ],
+          [
+            -12,
+            29.8419
+          ],
+          [
+            -11,
+            29.5531
+          ],
+          [
+            -10,
+            29.872
+          ],
+          [
+            -9,
+            30.5462
+          ],
+          [
+            -8,
+            30.2054
+          ],
+          [
+            -7,
+            32.4706
+          ],
+          [
+            -6,
+            29.0378
+          ],
+          [
+            -5,
+            29.0742
+          ],
+          [
+            -4,
+            28.5665
+          ],
+          [
+            -3,
+            29.5446
+          ],
+          [
+            -2,
+            30.4421
+          ],
+          [
+            -1,
+            28.7326
+          ],
+          [
+            0,
+            25.738
+          ]
+        ],
+        "baseline": 30.2958,
+        "current": 28.683,
+        "peak": 33.2636
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:ad:request_rate",
+      "source": "metrics",
+      "service": "ad",
+      "title": "ad request rate: 17.8 req/s \u2192 17.6 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            19.0345
+          ],
+          [
+            -44,
+            17.7708
+          ],
+          [
+            -43,
+            17.1669
+          ],
+          [
+            -42,
+            16.4055
+          ],
+          [
+            -41,
+            17.833
+          ],
+          [
+            -40,
+            18.2231
+          ],
+          [
+            -39,
+            18.1671
+          ],
+          [
+            -38,
+            16.4188
+          ],
+          [
+            -37,
+            17.1317
+          ],
+          [
+            -36,
+            18.9446
+          ],
+          [
+            -35,
+            20.7551
+          ],
+          [
+            -34,
+            17.7487
+          ],
+          [
+            -33,
+            19.9964
+          ],
+          [
+            -32,
+            16.8632
+          ],
+          [
+            -31,
+            17.7807
+          ],
+          [
+            -30,
+            16.6314
+          ],
+          [
+            -29,
+            16.8808
+          ],
+          [
+            -28,
+            19.2818
+          ],
+          [
+            -27,
+            18.8383
+          ],
+          [
+            -26,
+            18.6222
+          ],
+          [
+            -25,
+            18.4844
+          ],
+          [
+            -24,
+            16.0742
+          ],
+          [
+            -23,
+            17.8567
+          ],
+          [
+            -22,
+            18.0231
+          ],
+          [
+            -21,
+            18.7329
+          ],
+          [
+            -20,
+            17.9424
+          ],
+          [
+            -19,
+            16.9254
+          ],
+          [
+            -18,
+            17.1321
+          ],
+          [
+            -17,
+            16.5368
+          ],
+          [
+            -16,
+            18.3991
+          ],
+          [
+            -15,
+            18.8661
+          ],
+          [
+            -14,
+            17.0225
+          ],
+          [
+            -13,
+            18.6318
+          ],
+          [
+            -12,
+            17.2832
+          ],
+          [
+            -11,
+            17.0783
+          ],
+          [
+            -10,
+            17.8356
+          ],
+          [
+            -9,
+            18.6378
+          ],
+          [
+            -8,
+            16.8377
+          ],
+          [
+            -7,
+            18.4235
+          ],
+          [
+            -6,
+            16.4704
+          ],
+          [
+            -5,
+            17.6981
+          ],
+          [
+            -4,
+            18.3958
+          ],
+          [
+            -3,
+            16.3922
+          ],
+          [
+            -2,
+            18.3442
+          ],
+          [
+            -1,
+            16.1398
+          ],
+          [
+            0,
+            18.4072
+          ]
+        ],
+        "baseline": 17.833,
+        "current": 17.5629,
+        "peak": 20.7551
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:cpu_utilization",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend cpu utilization: 35.3% \u2192 35.9% (peak 38.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3469
+          ],
+          [
+            -44,
+            0.3526
+          ],
+          [
+            -43,
+            0.3713
+          ],
+          [
+            -42,
+            0.3238
+          ],
+          [
+            -41,
+            0.3699
+          ],
+          [
+            -40,
+            0.3343
+          ],
+          [
+            -39,
+            0.3553
+          ],
+          [
+            -38,
+            0.3434
+          ],
+          [
+            -37,
+            0.3654
+          ],
+          [
+            -36,
+            0.3473
+          ],
+          [
+            -35,
+            0.3561
+          ],
+          [
+            -34,
+            0.3699
+          ],
+          [
+            -33,
+            0.333
+          ],
+          [
+            -32,
+            0.3367
+          ],
+          [
+            -31,
+            0.3627
+          ],
+          [
+            -30,
+            0.384
+          ],
+          [
+            -29,
+            0.3489
+          ],
+          [
+            -28,
+            0.3729
+          ],
+          [
+            -27,
+            0.3441
+          ],
+          [
+            -26,
+            0.3361
+          ],
+          [
+            -25,
+            0.3601
+          ],
+          [
+            -24,
+            0.3837
+          ],
+          [
+            -23,
+            0.3531
+          ],
+          [
+            -22,
+            0.3505
+          ],
+          [
+            -21,
+            0.3733
+          ],
+          [
+            -20,
+            0.3365
+          ],
+          [
+            -19,
+            0.3641
+          ],
+          [
+            -18,
+            0.3742
+          ],
+          [
+            -17,
+            0.2958
+          ],
+          [
+            -16,
+            0.3506
+          ],
+          [
+            -15,
+            0.3332
+          ],
+          [
+            -14,
+            0.3366
+          ],
+          [
+            -13,
+            0.3675
+          ],
+          [
+            -12,
+            0.3566
+          ],
+          [
+            -11,
+            0.349
+          ],
+          [
+            -10,
+            0.3298
+          ],
+          [
+            -9,
+            0.3887
+          ],
+          [
+            -8,
+            0.3481
+          ],
+          [
+            -7,
+            0.3459
+          ],
+          [
+            -6,
+            0.3776
+          ],
+          [
+            -5,
+            0.3848
+          ],
+          [
+            -4,
+            0.3394
+          ],
+          [
+            -3,
+            0.3602
+          ],
+          [
+            -2,
+            0.3465
+          ],
+          [
+            -1,
+            0.3663
+          ],
+          [
+            0,
+            0.3589
+          ]
+        ],
+        "baseline": 0.3526,
+        "current": 0.3594,
+        "peak": 0.3887
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:error_rate",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend error rate: 0.4% \u2192 4.6%",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0044
+          ],
+          [
+            -44,
+            0.0041
+          ],
+          [
+            -43,
+            0.004
+          ],
+          [
+            -42,
+            0.0038
+          ],
+          [
+            -41,
+            0.0051
+          ],
+          [
+            -40,
+            0.004
+          ],
+          [
+            -39,
+            0.0046
+          ],
+          [
+            -38,
+            0.004
+          ],
+          [
+            -37,
+            0.0041
+          ],
+          [
+            -36,
+            0.0041
+          ],
+          [
+            -35,
+            0.0045
+          ],
+          [
+            -34,
+            0.0049
+          ],
+          [
+            -33,
+            0.0038
+          ],
+          [
+            -32,
+            0.0044
+          ],
+          [
+            -31,
+            0.0037
+          ],
+          [
+            -30,
+            0.0034
+          ],
+          [
+            -29,
+            0.004
+          ],
+          [
+            -28,
+            0.0037
+          ],
+          [
+            -27,
+            0.004
+          ],
+          [
+            -26,
+            0.0044
+          ],
+          [
+            -25,
+            0.0045
+          ],
+          [
+            -24,
+            0.0049
+          ],
+          [
+            -23,
+            0.0043
+          ],
+          [
+            -22,
+            0.0037
+          ],
+          [
+            -21,
+            0.0043
+          ],
+          [
+            -20,
+            0.004
+          ],
+          [
+            -19,
+            0.0038
+          ],
+          [
+            -18,
+            0.0039
+          ],
+          [
+            -17,
+            0.0045
+          ],
+          [
+            -16,
+            0.005
+          ],
+          [
+            -15,
+            0.0039
+          ],
+          [
+            -14,
+            0.0054
+          ],
+          [
+            -13,
+            0.0041
+          ],
+          [
+            -12,
+            0.0042
+          ],
+          [
+            -11,
+            0.0045
+          ],
+          [
+            -10,
+            0.0045
+          ],
+          [
+            -9,
+            0.026
+          ],
+          [
+            -8,
+            0.0312
+          ],
+          [
+            -7,
+            0.0423
+          ],
+          [
+            -6,
+            0.0367
+          ],
+          [
+            -5,
+            0.047
+          ],
+          [
+            -4,
+            0.0462
+          ],
+          [
+            -3,
+            0.0457
+          ],
+          [
+            -2,
+            0.0532
+          ],
+          [
+            -1,
+            0.0339
+          ],
+          [
+            0,
+            0.0515
+          ]
+        ],
+        "baseline": 0.0041,
+        "current": 0.0462,
+        "peak": 0.0532
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:memory_utilization",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend memory utilization: 52.1% \u2192 51.4% (peak 53.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.5088
+          ],
+          [
+            -44,
+            0.5356
+          ],
+          [
+            -43,
+            0.5209
+          ],
+          [
+            -42,
+            0.5349
+          ],
+          [
+            -41,
+            0.5272
+          ],
+          [
+            -40,
+            0.539
+          ],
+          [
+            -39,
+            0.5243
+          ],
+          [
+            -38,
+            0.4987
+          ],
+          [
+            -37,
+            0.5076
+          ],
+          [
+            -36,
+            0.5161
+          ],
+          [
+            -35,
+            0.5131
+          ],
+          [
+            -34,
+            0.5263
+          ],
+          [
+            -33,
+            0.5084
+          ],
+          [
+            -32,
+            0.5377
+          ],
+          [
+            -31,
+            0.5168
+          ],
+          [
+            -30,
+            0.5207
+          ],
+          [
+            -29,
+            0.5175
+          ],
+          [
+            -28,
+            0.5067
+          ],
+          [
+            -27,
+            0.5358
+          ],
+          [
+            -26,
+            0.5078
+          ],
+          [
+            -25,
+            0.5045
+          ],
+          [
+            -24,
+            0.5174
+          ],
+          [
+            -23,
+            0.5287
+          ],
+          [
+            -22,
+            0.5248
+          ],
+          [
+            -21,
+            0.5125
+          ],
+          [
+            -20,
+            0.5111
+          ],
+          [
+            -19,
+            0.5149
+          ],
+          [
+            -18,
+            0.5112
+          ],
+          [
+            -17,
+            0.5215
+          ],
+          [
+            -16,
+            0.5298
+          ],
+          [
+            -15,
+            0.5264
+          ],
+          [
+            -14,
+            0.5308
+          ],
+          [
+            -13,
+            0.5167
+          ],
+          [
+            -12,
+            0.5182
+          ],
+          [
+            -11,
+            0.5052
+          ],
+          [
+            -10,
+            0.4988
+          ],
+          [
+            -9,
+            0.5124
+          ],
+          [
+            -8,
+            0.5366
+          ],
+          [
+            -7,
+            0.5349
+          ],
+          [
+            -6,
+            0.5239
+          ],
+          [
+            -5,
+            0.5107
+          ],
+          [
+            -4,
+            0.5125
+          ],
+          [
+            -3,
+            0.5108
+          ],
+          [
+            -2,
+            0.5148
+          ],
+          [
+            -1,
+            0.5212
+          ],
+          [
+            0,
+            0.5141
+          ]
+        ],
+        "baseline": 0.5209,
+        "current": 0.514,
+        "peak": 0.539
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:p95_latency_ms",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend p95 latency ms: 177ms \u2192 182ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            184.45
+          ],
+          [
+            -44,
+            159.6973
+          ],
+          [
+            -43,
+            193.2617
+          ],
+          [
+            -42,
+            174.6515
+          ],
+          [
+            -41,
+            176.9786
+          ],
+          [
+            -40,
+            187.5518
+          ],
+          [
+            -39,
+            176.9998
+          ],
+          [
+            -38,
+            169.8111
+          ],
+          [
+            -37,
+            175.6098
+          ],
+          [
+            -36,
+            200.3909
+          ],
+          [
+            -35,
+            190.9042
+          ],
+          [
+            -34,
+            190.7172
+          ],
+          [
+            -33,
+            193.671
+          ],
+          [
+            -32,
+            182.5649
+          ],
+          [
+            -31,
+            177.2189
+          ],
+          [
+            -30,
+            158.1121
+          ],
+          [
+            -29,
+            177.3011
+          ],
+          [
+            -28,
+            160.7941
+          ],
+          [
+            -27,
+            168.5465
+          ],
+          [
+            -26,
+            165.8711
+          ],
+          [
+            -25,
+            200.891
+          ],
+          [
+            -24,
+            186.9797
+          ],
+          [
+            -23,
+            192.7682
+          ],
+          [
+            -22,
+            190.9877
+          ],
+          [
+            -21,
+            187.5189
+          ],
+          [
+            -20,
+            172.5454
+          ],
+          [
+            -19,
+            186.3037
+          ],
+          [
+            -18,
+            193.9961
+          ],
+          [
+            -17,
+            186.1678
+          ],
+          [
+            -16,
+            190.9296
+          ],
+          [
+            -15,
+            196.8961
+          ],
+          [
+            -14,
+            171.3944
+          ],
+          [
+            -13,
+            161.7062
+          ],
+          [
+            -12,
+            186.9384
+          ],
+          [
+            -11,
+            194.3865
+          ],
+          [
+            -10,
+            169.0391
+          ],
+          [
+            -9,
+            199.1017
+          ],
+          [
+            -8,
+            201.6656
+          ],
+          [
+            -7,
+            193.5506
+          ],
+          [
+            -6,
+            185.002
+          ],
+          [
+            -5,
+            154.4879
+          ],
+          [
+            -4,
+            183.3866
+          ],
+          [
+            -3,
+            190.0978
+          ],
+          [
+            -2,
+            169.3816
+          ],
+          [
+            -1,
+            193.5692
+          ],
+          [
+            0,
+            198.4736
+          ]
+        ],
+        "baseline": 176.9998,
+        "current": 181.5661,
+        "peak": 201.6656
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:request_rate",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend request rate: 44.7 req/s \u2192 42.8 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            44.3621
+          ],
+          [
+            -44,
+            42.9733
+          ],
+          [
+            -43,
+            44.6637
+          ],
+          [
+            -42,
+            42.0249
+          ],
+          [
+            -41,
+            47.4784
+          ],
+          [
+            -40,
+            45.11
+          ],
+          [
+            -39,
+            47.9178
+          ],
+          [
+            -38,
+            45.6976
+          ],
+          [
+            -37,
+            45.6928
+          ],
+          [
+            -36,
+            39.9448
+          ],
+          [
+            -35,
+            40.9091
+          ],
+          [
+            -34,
+            43.6902
+          ],
+          [
+            -33,
+            40.3308
+          ],
+          [
+            -32,
+            47.4125
+          ],
+          [
+            -31,
+            43.7196
+          ],
+          [
+            -30,
+            44.2906
+          ],
+          [
+            -29,
+            48.9343
+          ],
+          [
+            -28,
+            40.6218
+          ],
+          [
+            -27,
+            43.0111
+          ],
+          [
+            -26,
+            43.6932
+          ],
+          [
+            -25,
+            45.1808
+          ],
+          [
+            -24,
+            48.5201
+          ],
+          [
+            -23,
+            44.6559
+          ],
+          [
+            -22,
+            47.4787
+          ],
+          [
+            -21,
+            44.0807
+          ],
+          [
+            -20,
+            43.0473
+          ],
+          [
+            -19,
+            41.419
+          ],
+          [
+            -18,
+            50.6588
+          ],
+          [
+            -17,
+            45.9818
+          ],
+          [
+            -16,
+            45.3743
+          ],
+          [
+            -15,
+            46.6982
+          ],
+          [
+            -14,
+            43.2473
+          ],
+          [
+            -13,
+            42.9492
+          ],
+          [
+            -12,
+            42.7738
+          ],
+          [
+            -11,
+            44.7354
+          ],
+          [
+            -10,
+            43.8562
+          ],
+          [
+            -9,
+            46.7073
+          ],
+          [
+            -8,
+            47.5337
+          ],
+          [
+            -7,
+            45.743
+          ],
+          [
+            -6,
+            47.5463
+          ],
+          [
+            -5,
+            43.4917
+          ],
+          [
+            -4,
+            42.2403
+          ],
+          [
+            -3,
+            40.031
+          ],
+          [
+            -2,
+            44.1004
+          ],
+          [
+            -1,
+            43.7318
+          ],
+          [
+            0,
+            42.998
+          ]
+        ],
+        "baseline": 44.6637,
+        "current": 42.7655,
+        "peak": 50.6588
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend:f4f2f6f81d83",
+      "source": "traces",
+      "service": "ad",
+      "title": "Failing trace f4f2f6f81d83: frontend \u2192 ad",
+      "detail": "io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag adFailure)",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "f4f2f6f81d83c03dcb8d054b26fd4a57",
+        "spans": [
+          {
+            "service": "frontend",
+            "operation": "frontend/handle",
+            "duration_ms": 106.7,
+            "error": true,
+            "message": "rpc error calling ad: code = Internal",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "ad",
+            "operation": "ad/handle",
+            "duration_ms": 17.4,
+            "error": true,
+            "message": "io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag adFailure)",
+            "depth": 1,
+            "kind": "server"
+          }
+        ],
+        "origin": "ad"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend:summary",
+      "source": "traces",
+      "service": "frontend",
+      "title": "9/200 sampled frontend traces failed in the last 5m; top error origin: ad",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 9,
+        "error_origins": {
+          "ad": 8,
+          "currency": 1
+        },
+        "latency_contributors_ms": {},
+        "p95_ms": 180.0
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_error_origin",
+      "service": "ad",
+      "score": 3.111,
+      "summary": "89% of failing frontend traces end in ad",
+      "evidence_ids": [
+        "traces:frontend:summary"
+      ],
+      "data": {
+        "share": 0.8888888888888888,
+        "count": 8
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "recommendation",
+      "score": 1.5,
+      "summary": "recommendation rolled out 2.0.2 \u2192 2.0.3 9m before the alert",
+      "evidence_ids": [
+        "changes:recommendation:deploy:1"
+      ],
+      "data": {
+        "minutes_before_alert": 9.0,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "recent_config_change",
+      "service": "ad",
+      "score": 1.5,
+      "summary": "configmap/flagd-config: adFailure 'off' \u2192 'on' 10m before the alert",
+      "evidence_ids": [
+        "changes:ad:config:0"
+      ],
+      "data": {
+        "minutes_before_alert": 10.5,
+        "key": "adFailure"
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "product-catalog",
+      "score": 1.5,
+      "summary": "product-catalog rolled out 2.0.2 \u2192 2.0.3 14m before the alert",
+      "evidence_ids": [
+        "changes:product-catalog:deploy:2"
+      ],
+      "data": {
+        "minutes_before_alert": 13.9,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "ad",
+      "score": 1.0,
+      "summary": "ad error rate 0.4% \u2192 12.5%",
+      "evidence_ids": [
+        "metrics:ad:error_rate"
+      ],
+      "data": {
+        "baseline": 0.0039,
+        "current": 0.1249
+      }
+    },
+    {
+      "kind": "error_logs",
+      "service": "ad",
+      "score": 1.0,
+      "summary": "1,296\u00d7 ERROR in ad: io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag adFailure)",
+      "evidence_ids": [
+        "logs:ad:1"
+      ],
+      "data": {
+        "count": 1296,
+        "message": "io.grpc.StatusRuntimeException: UNAVAILABLE: ad service failure (flag adFailure)"
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "frontend",
+      "score": 0.6,
+      "summary": "frontend error rate 0.4% \u2192 4.6%",
+      "evidence_ids": [
+        "metrics:frontend:error_rate"
+      ],
+      "data": {
+        "baseline": 0.0041,
+        "current": 0.0462
+      }
+    },
+    {
+      "kind": "downstream_errors",
+      "service": "ad",
+      "score": 0.4,
+      "summary": "frontend logs 1,101 errors calling ad",
+      "evidence_ids": [
+        "logs:frontend:1"
+      ],
+      "data": {
+        "caller": "frontend"
+      }
+    },
+    {
+      "kind": "trace_error_origin",
+      "service": "currency",
+      "score": 0.389,
+      "summary": "11% of failing frontend traces end in currency",
+      "evidence_ids": [
+        "traces:frontend:summary"
+      ],
+      "data": {
+        "share": 0.1111111111111111,
+        "count": 1
+      }
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-04-22",
+      "title": "Ad service CPU saturation slowed every product page",
+      "type": "postmortem",
+      "services": [
+        "ad",
+        "frontend"
+      ],
+      "category": "cpu_saturation",
+      "date": "2026-04-22",
+      "snippet": "## Summary A regex in ad targeting went quadratic on long keyword lists. Ad CPU sat at 97% of its limit with heavy throttling, p95 rose to 1.5s and frontend page latency breached its SLO. A small share of ad calls hit DEADLINE_EXCEEDED. ## Resolution Scaled ad to 4 replicas, then fixed the regex. ## Lessons - CPU at limit + `CPUThrottlingHigh` + latency on one service with no errors elsewhere = sa\u2026",
+      "score": 30.523
+    },
+    {
+      "id": "RB-flagd",
+      "title": "Check and revert feature flags (flagd)",
+      "type": "runbook",
+      "services": [
+        "*"
+      ],
+      "category": "config_change",
+      "date": null,
+      "snippet": "The demo's failure flags live in the `flagd-config` ConfigMap: paymentFailure, paymentUnreachable, adFailure, adHighCpu, adManualGc, cartFailure, productCatalogFailure, recommendationCacheFailure, kafkaQueueProblems, imageSlowLoad, emailMemoryLeak, failedReadinessProbe. 1. `kubectl -n otel-demo get cm flagd-config -o jsonpath='{.data.demo\\.flagd\\.json}' | jq '.flags | map_values(.defaultVariant)'`\u2026",
+      "score": 26.65
+    },
+    {
+      "id": "PM-2026-05-04",
+      "title": "Recommendation OOM loop from an unbounded product cache",
+      "type": "postmortem",
+      "services": [
+        "recommendation",
+        "frontend"
+      ],
+      "category": "memory_leak",
+      "date": "2026-05-04",
+      "snippet": "## Summary Recommendation was OOMKilled every ~7 minutes for two hours. Each restart dropped in-flight requests, so frontend saw periodic bursts of 5xx. Memory grew linearly from ~45% to 100% of the limit between restarts (sawtooth). ## Root cause An in-process cache keyed by product-id list had no eviction. The `recommendationCacheFailure` flag reproduces this. ## Resolution Restarted the deploym\u2026",
+      "score": 23.541
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 19.217
+    },
+    {
+      "id": "PM-2026-06-17",
+      "title": "Accounting consumer lag from a long-running Postgres migration",
+      "type": "postmortem",
+      "services": [
+        "postgresql",
+        "accounting",
+        "product-catalog",
+        "kafka"
+      ],
+      "category": "datastore_degradation",
+      "date": "2026-06-17",
+      "snippet": "## Summary A manual `ALTER TABLE` on `orders` held a lock for 40 minutes. Accounting's inserts slowed from 30ms to ~1s, and its Kafka consumer lag grew past 5,000 messages. Product-catalog reads were also slower. The alert fired on consumer lag. ## Root cause Datastore degradation in postgresql (lock contention). Accounting was healthy but blocked on the database. ## Resolution Cancelled the migra\u2026",
+      "score": 17.358
+    }
+  ],
+  "services_examined": [
+    "frontend",
+    "ad"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "ad",
+    "expected_category": "config_change",
+    "predicted_service": "ad",
+    "predicted_category": "config_change",
+    "confidence": 0.95
+  },
+  "slack_posted": false
+}

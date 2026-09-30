@@ -1,0 +1,3678 @@
+{
+  "id": "8dfe99f5f995",
+  "alert": {
+    "name": "FrontendHighErrorRate",
+    "service": "frontend",
+    "severity": "critical",
+    "summary": "frontend 5xx ratio > 2% for 5m",
+    "labels": {
+      "scenario_id": "cart-pool-exhaustion"
+    },
+    "starts_at": "2026-09-30T02:49:51.539660Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "cart-pool-exhaustion",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:49:51.539714Z",
+  "completed_at": "2026-09-30T02:50:20.483794Z",
+  "duration_ms": 28943,
+  "hypothesis": {
+    "root_cause_service": "cart",
+    "category": "resource_exhaustion",
+    "title": "cart Redis connection pool exhausted (pool busy=8/8)",
+    "summary": "The cart service's Redis client connection pool is exhausted (all 8 connections busy), causing 21% of cart requests to fail with RedisTimeoutException. This propagates upstream to frontend, which sees 11% errors. Valkey-cart itself is healthy (3ms p95, 0.4% errors, 9% CPU), confirming the bottleneck is the client-side pool size in cart, not the datastore.",
+    "reasoning": "The alert fired on frontend 5xx errors, but the traces clearly show that 95% of failing frontend traces terminate in cart, and 98% of failing cart traces also terminate in cart itself. The error logs from cart show 3,880 occurrences of \"StackExchange.Redis.RedisTimeoutException: Timeout awaiting response ... pool busy=8/8\" starting 14 minutes before the alert. This \"pool busy=8/8\" message is the key diagnostic: it indicates that all 8 connections in cart's Redis client pool are exhausted, preventing new requests from acquiring a connection. Valkey-cart's own metrics are completely healthy: error rate remains at 0.4%, p95 latency is stable at ~3ms, CPU at 9%, and memory at 31%. The one valkey-cart pod restart (exit 137, OOMKilled) occurred but valkey-cart's memory utilization is only 31%, so this was likely a transient event unrelated to the current issue. The email deploy 24 minutes before the alert is a red herring\u2014email is not on the failing call path (frontend\u2192cart), and the errors are all Redis timeouts in cart, not email-related. This matches postmortem PM-2026-03-12 exactly: \"Cart checkout failures from Redis connection-pool exhaustion\" with the same \"pool busy=8/8\" signature and healthy valkey metrics. The root cause is resource exhaustion (connection pool) in the cart service.",
+    "confidence": 0.95,
+    "supporting_evidence": [
+      {
+        "evidence_id": "logs:cart:1",
+        "why_it_matters": "3,880 errors in cart with 'pool busy=8/8' directly show the Redis connection pool is exhausted, preventing cart from acquiring connections to valkey-cart."
+      },
+      {
+        "evidence_id": "traces:cart:summary",
+        "why_it_matters": "98% of failing cart traces terminate in cart itself, confirming cart is the origin of the errors, not a downstream dependency."
+      },
+      {
+        "evidence_id": "traces:frontend:summary",
+        "why_it_matters": "95% of failing frontend traces end in cart, showing that frontend errors are propagated from cart, not originating in frontend."
+      },
+      {
+        "evidence_id": "metrics:valkey-cart:p95_latency_ms",
+        "why_it_matters": "Valkey-cart p95 latency remains stable at 3ms, ruling out datastore degradation and confirming the bottleneck is client-side pool exhaustion."
+      },
+      {
+        "evidence_id": "metrics:valkey-cart:error_rate",
+        "why_it_matters": "Valkey-cart error rate is steady at 0.4%, proving the datastore is healthy and the problem is in cart's connection pool."
+      },
+      {
+        "evidence_id": "metrics:cart:error_rate",
+        "why_it_matters": "Cart error rate spiked from 0.4% to 21.3% starting around -10m, coinciding with the pool exhaustion logs."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Increase cart Redis connection pool size",
+        "command": "kubectl -n otel-demo set env deployment/cart REDIS_POOL_SIZE=32",
+        "risk": "low",
+        "rationale": "The immediate mitigation is to raise the pool size from 8 to a higher value (e.g., 32 or 64). This requires a config change or code change and redeploy. Check cart's Redis client configuration (StackExchange.Redis) for the pool size setting."
+      },
+      {
+        "title": "Restart cart pods to clear any stuck connections",
+        "command": "kubectl -n otel-demo rollout restart deployment/cart",
+        "risk": "medium",
+        "rationale": "If connections are stuck in a bad state, a rolling restart may temporarily relieve pressure while the pool size is increased. However, this is only a temporary fix if the pool is genuinely too small for the load."
+      },
+      {
+        "title": "Verify valkey-cart health and check for slow commands",
+        "command": "kubectl -n otel-demo exec deploy/valkey-cart -- valkey-cli SLOWLOG GET 10",
+        "risk": "low",
+        "rationale": "Although metrics show valkey-cart is healthy, confirm there are no slow commands or blocking operations that could be holding connections longer than expected."
+      }
+    ],
+    "related_documents": [
+      "PM-2026-03-12",
+      "RB-valkey"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "valkey-cart",
+        "category": "datastore_degradation",
+        "why_less_likely": "Valkey-cart's own metrics are healthy: p95 latency is stable at 3ms, error rate at 0.4%, CPU at 9%, and memory at 31%. The 'pool busy=8/8' message in cart logs indicates client-side pool exhaustion, not server-side slowness."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:email:deploy:0",
+      "source": "changes",
+      "service": "email",
+      "title": "deployment/email rolled out 2.0.2 \u2192 2.0.3 (24m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/email",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 24.1
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:valkey-cart:Killing:1",
+      "source": "k8s_events",
+      "service": "valkey-cart",
+      "title": "Killing \u00d71 on pod/valkey-cart-ffd2c432-31817",
+      "detail": "Stopping container valkey-cart",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "Killing",
+        "object": "pod/valkey-cart-ffd2c432-31817",
+        "count": 1,
+        "message": "Stopping container valkey-cart",
+        "first_seen_min": -43.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:valkey-cart:pod_status",
+      "source": "k8s_events",
+      "service": "valkey-cart",
+      "title": "pod/valkey-cart-ffd2c432-31817 restarts=1, last terminated: Error (exit code 137)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/valkey-cart-ffd2c432-31817",
+        "phase": "Running",
+        "restarts": 1,
+        "last_termination_reason": "Error (exit code 137)",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:cart:1",
+      "source": "logs",
+      "service": "cart",
+      "title": "3,880\u00d7 ERROR StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbou",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8",
+        "level": "ERROR",
+        "count": 3880,
+        "sample": "StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8 (trace_id=\u2026)",
+        "first_seen_min": -14.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:1",
+      "source": "logs",
+      "service": "frontend",
+      "title": "3,180\u00d7 ERROR failed calling cart: StackExchange.Redis.RedisTimeoutException: Timeout awaiting response ",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "failed calling cart: StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8",
+        "level": "ERROR",
+        "count": 3180,
+        "sample": "failed calling cart: StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8",
+        "first_seen_min": -14.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:2",
+      "source": "logs",
+      "service": "frontend",
+      "title": "480\u00d7 ERROR failed calling checkout: StackExchange.Redis.RedisTimeoutException: Timeout awaiting respo",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "failed calling checkout: StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8",
+        "level": "ERROR",
+        "count": 480,
+        "sample": "failed calling checkout: StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8",
+        "first_seen_min": -14.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:3",
+      "source": "logs",
+      "service": "frontend",
+      "title": "14\u00d7 WARN slow render for /product/{id} (>500ms)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "slow render for /product/{id} (>500ms)",
+        "level": "WARN",
+        "count": 14,
+        "sample": "slow render for /product/{id} (>500ms)",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:cart:cpu_utilization",
+      "source": "metrics",
+      "service": "cart",
+      "title": "cart cpu utilization: 21.6% \u2192 20.8% (peak 23.6%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2049
+          ],
+          [
+            -44,
+            0.2163
+          ],
+          [
+            -43,
+            0.2139
+          ],
+          [
+            -42,
+            0.2187
+          ],
+          [
+            -41,
+            0.2144
+          ],
+          [
+            -40,
+            0.2229
+          ],
+          [
+            -39,
+            0.2243
+          ],
+          [
+            -38,
+            0.2043
+          ],
+          [
+            -37,
+            0.2253
+          ],
+          [
+            -36,
+            0.2247
+          ],
+          [
+            -35,
+            0.2148
+          ],
+          [
+            -34,
+            0.2217
+          ],
+          [
+            -33,
+            0.2051
+          ],
+          [
+            -32,
+            0.21
+          ],
+          [
+            -31,
+            0.2228
+          ],
+          [
+            -30,
+            0.2272
+          ],
+          [
+            -29,
+            0.2224
+          ],
+          [
+            -28,
+            0.2047
+          ],
+          [
+            -27,
+            0.1924
+          ],
+          [
+            -26,
+            0.2082
+          ],
+          [
+            -25,
+            0.2043
+          ],
+          [
+            -24,
+            0.1957
+          ],
+          [
+            -23,
+            0.2104
+          ],
+          [
+            -22,
+            0.2005
+          ],
+          [
+            -21,
+            0.2143
+          ],
+          [
+            -20,
+            0.1991
+          ],
+          [
+            -19,
+            0.2295
+          ],
+          [
+            -18,
+            0.1925
+          ],
+          [
+            -17,
+            0.1975
+          ],
+          [
+            -16,
+            0.1937
+          ],
+          [
+            -15,
+            0.1972
+          ],
+          [
+            -14,
+            0.2228
+          ],
+          [
+            -13,
+            0.2161
+          ],
+          [
+            -12,
+            0.2003
+          ],
+          [
+            -11,
+            0.2059
+          ],
+          [
+            -10,
+            0.2126
+          ],
+          [
+            -9,
+            0.2362
+          ],
+          [
+            -8,
+            0.2195
+          ],
+          [
+            -7,
+            0.2162
+          ],
+          [
+            -6,
+            0.2045
+          ],
+          [
+            -5,
+            0.2102
+          ],
+          [
+            -4,
+            0.2113
+          ],
+          [
+            -3,
+            0.2114
+          ],
+          [
+            -2,
+            0.2128
+          ],
+          [
+            -1,
+            0.2008
+          ],
+          [
+            0,
+            0.2024
+          ]
+        ],
+        "baseline": 0.2163,
+        "current": 0.2081,
+        "peak": 0.2362
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:cart:error_rate",
+      "source": "metrics",
+      "service": "cart",
+      "title": "cart error rate: 0.4% \u2192 21.3%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0038
+          ],
+          [
+            -44,
+            0.0041
+          ],
+          [
+            -43,
+            0.004
+          ],
+          [
+            -42,
+            0.004
+          ],
+          [
+            -41,
+            0.0044
+          ],
+          [
+            -40,
+            0.0043
+          ],
+          [
+            -39,
+            0.0036
+          ],
+          [
+            -38,
+            0.0042
+          ],
+          [
+            -37,
+            0.0046
+          ],
+          [
+            -36,
+            0.0038
+          ],
+          [
+            -35,
+            0.0045
+          ],
+          [
+            -34,
+            0.0031
+          ],
+          [
+            -33,
+            0.0039
+          ],
+          [
+            -32,
+            0.0027
+          ],
+          [
+            -31,
+            0.0045
+          ],
+          [
+            -30,
+            0.0037
+          ],
+          [
+            -29,
+            0.0042
+          ],
+          [
+            -28,
+            0.0049
+          ],
+          [
+            -27,
+            0.0041
+          ],
+          [
+            -26,
+            0.0042
+          ],
+          [
+            -25,
+            0.0032
+          ],
+          [
+            -24,
+            0.0028
+          ],
+          [
+            -23,
+            0.0036
+          ],
+          [
+            -22,
+            0.0032
+          ],
+          [
+            -21,
+            0.0049
+          ],
+          [
+            -20,
+            0.0043
+          ],
+          [
+            -19,
+            0.0043
+          ],
+          [
+            -18,
+            0.0042
+          ],
+          [
+            -17,
+            0.0043
+          ],
+          [
+            -16,
+            0.0044
+          ],
+          [
+            -15,
+            0.004
+          ],
+          [
+            -14,
+            0.0034
+          ],
+          [
+            -13,
+            0.1255
+          ],
+          [
+            -12,
+            0.2283
+          ],
+          [
+            -11,
+            0.1598
+          ],
+          [
+            -10,
+            0.2383
+          ],
+          [
+            -9,
+            0.1938
+          ],
+          [
+            -8,
+            0.2157
+          ],
+          [
+            -7,
+            0.2248
+          ],
+          [
+            -6,
+            0.2449
+          ],
+          [
+            -5,
+            0.1847
+          ],
+          [
+            -4,
+            0.1906
+          ],
+          [
+            -3,
+            0.2074
+          ],
+          [
+            -2,
+            0.2237
+          ],
+          [
+            -1,
+            0.2567
+          ],
+          [
+            0,
+            0.2138
+          ]
+        ],
+        "baseline": 0.0041,
+        "current": 0.2128,
+        "peak": 0.2567
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:cart:memory_utilization",
+      "source": "metrics",
+      "service": "cart",
+      "title": "cart memory utilization: 43.8% \u2192 43.6% (peak 45.7%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.426
+          ],
+          [
+            -44,
+            0.4381
+          ],
+          [
+            -43,
+            0.4304
+          ],
+          [
+            -42,
+            0.429
+          ],
+          [
+            -41,
+            0.4566
+          ],
+          [
+            -40,
+            0.453
+          ],
+          [
+            -39,
+            0.4494
+          ],
+          [
+            -38,
+            0.4412
+          ],
+          [
+            -37,
+            0.4363
+          ],
+          [
+            -36,
+            0.441
+          ],
+          [
+            -35,
+            0.4336
+          ],
+          [
+            -34,
+            0.4342
+          ],
+          [
+            -33,
+            0.4513
+          ],
+          [
+            -32,
+            0.4326
+          ],
+          [
+            -31,
+            0.4394
+          ],
+          [
+            -30,
+            0.4465
+          ],
+          [
+            -29,
+            0.4394
+          ],
+          [
+            -28,
+            0.4511
+          ],
+          [
+            -27,
+            0.4431
+          ],
+          [
+            -26,
+            0.4519
+          ],
+          [
+            -25,
+            0.4407
+          ],
+          [
+            -24,
+            0.4493
+          ],
+          [
+            -23,
+            0.4419
+          ],
+          [
+            -22,
+            0.4376
+          ],
+          [
+            -21,
+            0.4383
+          ],
+          [
+            -20,
+            0.4492
+          ],
+          [
+            -19,
+            0.4407
+          ],
+          [
+            -18,
+            0.4453
+          ],
+          [
+            -17,
+            0.4472
+          ],
+          [
+            -16,
+            0.4391
+          ],
+          [
+            -15,
+            0.4409
+          ],
+          [
+            -14,
+            0.4445
+          ],
+          [
+            -13,
+            0.4277
+          ],
+          [
+            -12,
+            0.4491
+          ],
+          [
+            -11,
+            0.4508
+          ],
+          [
+            -10,
+            0.4485
+          ],
+          [
+            -9,
+            0.449
+          ],
+          [
+            -8,
+            0.4371
+          ],
+          [
+            -7,
+            0.4502
+          ],
+          [
+            -6,
+            0.4469
+          ],
+          [
+            -5,
+            0.4374
+          ],
+          [
+            -4,
+            0.4277
+          ],
+          [
+            -3,
+            0.448
+          ],
+          [
+            -2,
+            0.4322
+          ],
+          [
+            -1,
+            0.4388
+          ],
+          [
+            0,
+            0.432
+          ]
+        ],
+        "baseline": 0.4381,
+        "current": 0.436,
+        "peak": 0.4566
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:cart:p95_latency_ms",
+      "source": "metrics",
+      "service": "cart",
+      "title": "cart p95 latency ms: 26ms \u2192 505ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            26.5165
+          ],
+          [
+            -44,
+            25.5486
+          ],
+          [
+            -43,
+            21.2738
+          ],
+          [
+            -42,
+            25.1045
+          ],
+          [
+            -41,
+            25.2007
+          ],
+          [
+            -40,
+            20.8421
+          ],
+          [
+            -39,
+            26.9787
+          ],
+          [
+            -38,
+            26.6866
+          ],
+          [
+            -37,
+            26.125
+          ],
+          [
+            -36,
+            24.2671
+          ],
+          [
+            -35,
+            26.2621
+          ],
+          [
+            -34,
+            21.7921
+          ],
+          [
+            -33,
+            28.0693
+          ],
+          [
+            -32,
+            22.9949
+          ],
+          [
+            -31,
+            23.9665
+          ],
+          [
+            -30,
+            23.7437
+          ],
+          [
+            -29,
+            25.5834
+          ],
+          [
+            -28,
+            27.6801
+          ],
+          [
+            -27,
+            25.2575
+          ],
+          [
+            -26,
+            26.0806
+          ],
+          [
+            -25,
+            25.7345
+          ],
+          [
+            -24,
+            26.96
+          ],
+          [
+            -23,
+            24.736
+          ],
+          [
+            -22,
+            24.0414
+          ],
+          [
+            -21,
+            24.6078
+          ],
+          [
+            -20,
+            26.4008
+          ],
+          [
+            -19,
+            26.8297
+          ],
+          [
+            -18,
+            25.5188
+          ],
+          [
+            -17,
+            23.1886
+          ],
+          [
+            -16,
+            23.1579
+          ],
+          [
+            -15,
+            24.4674
+          ],
+          [
+            -14,
+            23.8758
+          ],
+          [
+            -13,
+            265.5564
+          ],
+          [
+            -12,
+            568.6578
+          ],
+          [
+            -11,
+            521.8098
+          ],
+          [
+            -10,
+            530.0352
+          ],
+          [
+            -9,
+            405.5615
+          ],
+          [
+            -8,
+            508.4673
+          ],
+          [
+            -7,
+            500.0791
+          ],
+          [
+            -6,
+            524.7841
+          ],
+          [
+            -5,
+            491.9976
+          ],
+          [
+            -4,
+            500.1306
+          ],
+          [
+            -3,
+            541.279
+          ],
+          [
+            -2,
+            478.5485
+          ],
+          [
+            -1,
+            502.4987
+          ],
+          [
+            0,
+            513.2031
+          ]
+        ],
+        "baseline": 25.5486,
+        "current": 504.6096,
+        "peak": 568.6578
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:cart:request_rate",
+      "source": "metrics",
+      "service": "cart",
+      "title": "cart request rate: 21.0 req/s \u2192 21.6 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            19.9228
+          ],
+          [
+            -44,
+            19.7238
+          ],
+          [
+            -43,
+            20.9619
+          ],
+          [
+            -42,
+            22.7008
+          ],
+          [
+            -41,
+            20.6017
+          ],
+          [
+            -40,
+            21.31
+          ],
+          [
+            -39,
+            21.5862
+          ],
+          [
+            -38,
+            19.8381
+          ],
+          [
+            -37,
+            21.8393
+          ],
+          [
+            -36,
+            21.7209
+          ],
+          [
+            -35,
+            20.6991
+          ],
+          [
+            -34,
+            20.6634
+          ],
+          [
+            -33,
+            20.4531
+          ],
+          [
+            -32,
+            21.1128
+          ],
+          [
+            -31,
+            20.692
+          ],
+          [
+            -30,
+            22.4758
+          ],
+          [
+            -29,
+            20.0073
+          ],
+          [
+            -28,
+            21.1814
+          ],
+          [
+            -27,
+            20.1749
+          ],
+          [
+            -26,
+            21.2989
+          ],
+          [
+            -25,
+            21.4678
+          ],
+          [
+            -24,
+            21.9074
+          ],
+          [
+            -23,
+            20.3438
+          ],
+          [
+            -22,
+            21.5055
+          ],
+          [
+            -21,
+            20.873
+          ],
+          [
+            -20,
+            20.7215
+          ],
+          [
+            -19,
+            21.0602
+          ],
+          [
+            -18,
+            20.6447
+          ],
+          [
+            -17,
+            20.3898
+          ],
+          [
+            -16,
+            21.4558
+          ],
+          [
+            -15,
+            20.1292
+          ],
+          [
+            -14,
+            19.3911
+          ],
+          [
+            -13,
+            21.7774
+          ],
+          [
+            -12,
+            23.006
+          ],
+          [
+            -11,
+            20.4412
+          ],
+          [
+            -10,
+            20.4187
+          ],
+          [
+            -9,
+            23.2543
+          ],
+          [
+            -8,
+            18.7676
+          ],
+          [
+            -7,
+            20.6211
+          ],
+          [
+            -6,
+            21.7332
+          ],
+          [
+            -5,
+            21.2541
+          ],
+          [
+            -4,
+            22.4881
+          ],
+          [
+            -3,
+            21.234
+          ],
+          [
+            -2,
+            22.152
+          ],
+          [
+            -1,
+            20.5919
+          ],
+          [
+            0,
+            21.8381
+          ]
+        ],
+        "baseline": 20.9619,
+        "current": 21.593,
+        "peak": 23.2543
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:cpu_utilization",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend cpu utilization: 34.6% \u2192 36.5% (peak 38.6%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3333
+          ],
+          [
+            -44,
+            0.3702
+          ],
+          [
+            -43,
+            0.3295
+          ],
+          [
+            -42,
+            0.3576
+          ],
+          [
+            -41,
+            0.345
+          ],
+          [
+            -40,
+            0.3549
+          ],
+          [
+            -39,
+            0.3461
+          ],
+          [
+            -38,
+            0.3296
+          ],
+          [
+            -37,
+            0.3301
+          ],
+          [
+            -36,
+            0.3622
+          ],
+          [
+            -35,
+            0.3696
+          ],
+          [
+            -34,
+            0.3419
+          ],
+          [
+            -33,
+            0.3314
+          ],
+          [
+            -32,
+            0.3423
+          ],
+          [
+            -31,
+            0.3335
+          ],
+          [
+            -30,
+            0.355
+          ],
+          [
+            -29,
+            0.3276
+          ],
+          [
+            -28,
+            0.3294
+          ],
+          [
+            -27,
+            0.3128
+          ],
+          [
+            -26,
+            0.3542
+          ],
+          [
+            -25,
+            0.328
+          ],
+          [
+            -24,
+            0.3427
+          ],
+          [
+            -23,
+            0.3647
+          ],
+          [
+            -22,
+            0.3377
+          ],
+          [
+            -21,
+            0.3571
+          ],
+          [
+            -20,
+            0.3507
+          ],
+          [
+            -19,
+            0.3485
+          ],
+          [
+            -18,
+            0.3415
+          ],
+          [
+            -17,
+            0.3838
+          ],
+          [
+            -16,
+            0.3385
+          ],
+          [
+            -15,
+            0.3585
+          ],
+          [
+            -14,
+            0.3347
+          ],
+          [
+            -13,
+            0.3541
+          ],
+          [
+            -12,
+            0.3459
+          ],
+          [
+            -11,
+            0.3494
+          ],
+          [
+            -10,
+            0.386
+          ],
+          [
+            -9,
+            0.3501
+          ],
+          [
+            -8,
+            0.3473
+          ],
+          [
+            -7,
+            0.3493
+          ],
+          [
+            -6,
+            0.3595
+          ],
+          [
+            -5,
+            0.3652
+          ],
+          [
+            -4,
+            0.3842
+          ],
+          [
+            -3,
+            0.3449
+          ],
+          [
+            -2,
+            0.3481
+          ],
+          [
+            -1,
+            0.3754
+          ],
+          [
+            0,
+            0.3718
+          ]
+        ],
+        "baseline": 0.3461,
+        "current": 0.3649,
+        "peak": 0.386
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:error_rate",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend error rate: 0.4% \u2192 11.0%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0045
+          ],
+          [
+            -44,
+            0.0044
+          ],
+          [
+            -43,
+            0.004
+          ],
+          [
+            -42,
+            0.0041
+          ],
+          [
+            -41,
+            0.004
+          ],
+          [
+            -40,
+            0.0047
+          ],
+          [
+            -39,
+            0.0042
+          ],
+          [
+            -38,
+            0.0042
+          ],
+          [
+            -37,
+            0.0039
+          ],
+          [
+            -36,
+            0.0026
+          ],
+          [
+            -35,
+            0.0039
+          ],
+          [
+            -34,
+            0.0036
+          ],
+          [
+            -33,
+            0.0028
+          ],
+          [
+            -32,
+            0.0043
+          ],
+          [
+            -31,
+            0.0034
+          ],
+          [
+            -30,
+            0.0037
+          ],
+          [
+            -29,
+            0.0051
+          ],
+          [
+            -28,
+            0.0043
+          ],
+          [
+            -27,
+            0.0035
+          ],
+          [
+            -26,
+            0.0044
+          ],
+          [
+            -25,
+            0.0042
+          ],
+          [
+            -24,
+            0.0037
+          ],
+          [
+            -23,
+            0.0042
+          ],
+          [
+            -22,
+            0.0047
+          ],
+          [
+            -21,
+            0.0052
+          ],
+          [
+            -20,
+            0.0035
+          ],
+          [
+            -19,
+            0.004
+          ],
+          [
+            -18,
+            0.0028
+          ],
+          [
+            -17,
+            0.0032
+          ],
+          [
+            -16,
+            0.0039
+          ],
+          [
+            -15,
+            0.0048
+          ],
+          [
+            -14,
+            0.0032
+          ],
+          [
+            -13,
+            0.0562
+          ],
+          [
+            -12,
+            0.1214
+          ],
+          [
+            -11,
+            0.1006
+          ],
+          [
+            -10,
+            0.087
+          ],
+          [
+            -9,
+            0.1114
+          ],
+          [
+            -8,
+            0.0905
+          ],
+          [
+            -7,
+            0.1098
+          ],
+          [
+            -6,
+            0.1133
+          ],
+          [
+            -5,
+            0.1014
+          ],
+          [
+            -4,
+            0.12
+          ],
+          [
+            -3,
+            0.0791
+          ],
+          [
+            -2,
+            0.1059
+          ],
+          [
+            -1,
+            0.1227
+          ],
+          [
+            0,
+            0.1307
+          ]
+        ],
+        "baseline": 0.0041,
+        "current": 0.11,
+        "peak": 0.1307
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:memory_utilization",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend memory utilization: 51.8% \u2192 52.3% (peak 54.5%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.5183
+          ],
+          [
+            -44,
+            0.5107
+          ],
+          [
+            -43,
+            0.5152
+          ],
+          [
+            -42,
+            0.5301
+          ],
+          [
+            -41,
+            0.5177
+          ],
+          [
+            -40,
+            0.5298
+          ],
+          [
+            -39,
+            0.5224
+          ],
+          [
+            -38,
+            0.5432
+          ],
+          [
+            -37,
+            0.5152
+          ],
+          [
+            -36,
+            0.5159
+          ],
+          [
+            -35,
+            0.5128
+          ],
+          [
+            -34,
+            0.5223
+          ],
+          [
+            -33,
+            0.5178
+          ],
+          [
+            -32,
+            0.5137
+          ],
+          [
+            -31,
+            0.5254
+          ],
+          [
+            -30,
+            0.5185
+          ],
+          [
+            -29,
+            0.5302
+          ],
+          [
+            -28,
+            0.5266
+          ],
+          [
+            -27,
+            0.5205
+          ],
+          [
+            -26,
+            0.5325
+          ],
+          [
+            -25,
+            0.5237
+          ],
+          [
+            -24,
+            0.5153
+          ],
+          [
+            -23,
+            0.4981
+          ],
+          [
+            -22,
+            0.5116
+          ],
+          [
+            -21,
+            0.5167
+          ],
+          [
+            -20,
+            0.5278
+          ],
+          [
+            -19,
+            0.502
+          ],
+          [
+            -18,
+            0.5232
+          ],
+          [
+            -17,
+            0.5284
+          ],
+          [
+            -16,
+            0.5328
+          ],
+          [
+            -15,
+            0.5147
+          ],
+          [
+            -14,
+            0.5112
+          ],
+          [
+            -13,
+            0.5447
+          ],
+          [
+            -12,
+            0.516
+          ],
+          [
+            -11,
+            0.5198
+          ],
+          [
+            -10,
+            0.5354
+          ],
+          [
+            -9,
+            0.5274
+          ],
+          [
+            -8,
+            0.533
+          ],
+          [
+            -7,
+            0.5148
+          ],
+          [
+            -6,
+            0.5238
+          ],
+          [
+            -5,
+            0.5249
+          ],
+          [
+            -4,
+            0.5199
+          ],
+          [
+            -3,
+            0.5194
+          ],
+          [
+            -2,
+            0.5344
+          ],
+          [
+            -1,
+            0.5208
+          ],
+          [
+            0,
+            0.5214
+          ]
+        ],
+        "baseline": 0.5177,
+        "current": 0.5235,
+        "peak": 0.5447
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:p95_latency_ms",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend p95 latency ms: 190ms \u2192 473ms",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            174.7154
+          ],
+          [
+            -44,
+            170.2935
+          ],
+          [
+            -43,
+            181.9292
+          ],
+          [
+            -42,
+            176.1912
+          ],
+          [
+            -41,
+            196.7337
+          ],
+          [
+            -40,
+            190.5856
+          ],
+          [
+            -39,
+            163.6482
+          ],
+          [
+            -38,
+            200.5047
+          ],
+          [
+            -37,
+            189.6276
+          ],
+          [
+            -36,
+            190.8373
+          ],
+          [
+            -35,
+            190.4781
+          ],
+          [
+            -34,
+            189.2722
+          ],
+          [
+            -33,
+            187.1062
+          ],
+          [
+            -32,
+            205.85
+          ],
+          [
+            -31,
+            169.6429
+          ],
+          [
+            -30,
+            174.9117
+          ],
+          [
+            -29,
+            191.9647
+          ],
+          [
+            -28,
+            172.0865
+          ],
+          [
+            -27,
+            173.8408
+          ],
+          [
+            -26,
+            183.538
+          ],
+          [
+            -25,
+            195.8109
+          ],
+          [
+            -24,
+            180.7467
+          ],
+          [
+            -23,
+            172.3896
+          ],
+          [
+            -22,
+            170.7676
+          ],
+          [
+            -21,
+            169.1189
+          ],
+          [
+            -20,
+            183.0952
+          ],
+          [
+            -19,
+            174.1126
+          ],
+          [
+            -18,
+            178.4617
+          ],
+          [
+            -17,
+            172.4777
+          ],
+          [
+            -16,
+            198.7586
+          ],
+          [
+            -15,
+            167.6599
+          ],
+          [
+            -14,
+            169.3165
+          ],
+          [
+            -13,
+            335.8743
+          ],
+          [
+            -12,
+            478.7931
+          ],
+          [
+            -11,
+            457.264
+          ],
+          [
+            -10,
+            479.3813
+          ],
+          [
+            -9,
+            484.652
+          ],
+          [
+            -8,
+            572.6296
+          ],
+          [
+            -7,
+            525.7047
+          ],
+          [
+            -6,
+            474.2975
+          ],
+          [
+            -5,
+            466.3993
+          ],
+          [
+            -4,
+            501.4525
+          ],
+          [
+            -3,
+            462.6034
+          ],
+          [
+            -2,
+            438.3095
+          ],
+          [
+            -1,
+            461.8785
+          ],
+          [
+            0,
+            508.996
+          ]
+        ],
+        "baseline": 189.6276,
+        "current": 473.2732,
+        "peak": 572.6296
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:request_rate",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend request rate: 45.4 req/s \u2192 46.9 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            45.164
+          ],
+          [
+            -44,
+            45.5509
+          ],
+          [
+            -43,
+            45.4256
+          ],
+          [
+            -42,
+            43.0596
+          ],
+          [
+            -41,
+            48.4646
+          ],
+          [
+            -40,
+            46.3124
+          ],
+          [
+            -39,
+            48.3014
+          ],
+          [
+            -38,
+            47.5187
+          ],
+          [
+            -37,
+            41.0843
+          ],
+          [
+            -36,
+            44.0564
+          ],
+          [
+            -35,
+            44.1296
+          ],
+          [
+            -34,
+            46.7239
+          ],
+          [
+            -33,
+            45.438
+          ],
+          [
+            -32,
+            44.2194
+          ],
+          [
+            -31,
+            46.0558
+          ],
+          [
+            -30,
+            46.163
+          ],
+          [
+            -29,
+            45.0137
+          ],
+          [
+            -28,
+            39.7499
+          ],
+          [
+            -27,
+            45.6418
+          ],
+          [
+            -26,
+            42.0632
+          ],
+          [
+            -25,
+            43.3337
+          ],
+          [
+            -24,
+            41.9615
+          ],
+          [
+            -23,
+            45.2656
+          ],
+          [
+            -22,
+            44.6206
+          ],
+          [
+            -21,
+            45.2805
+          ],
+          [
+            -20,
+            44.3405
+          ],
+          [
+            -19,
+            45.947
+          ],
+          [
+            -18,
+            41.4754
+          ],
+          [
+            -17,
+            44.7269
+          ],
+          [
+            -16,
+            45.1371
+          ],
+          [
+            -15,
+            38.8482
+          ],
+          [
+            -14,
+            43.4089
+          ],
+          [
+            -13,
+            45.2161
+          ],
+          [
+            -12,
+            49.0978
+          ],
+          [
+            -11,
+            44.8469
+          ],
+          [
+            -10,
+            47.8418
+          ],
+          [
+            -9,
+            48.1068
+          ],
+          [
+            -8,
+            44.4901
+          ],
+          [
+            -7,
+            45.061
+          ],
+          [
+            -6,
+            42.3581
+          ],
+          [
+            -5,
+            47.4809
+          ],
+          [
+            -4,
+            46.9119
+          ],
+          [
+            -3,
+            46.0264
+          ],
+          [
+            -2,
+            50.6867
+          ],
+          [
+            -1,
+            46.6146
+          ],
+          [
+            0,
+            43.4205
+          ]
+        ],
+        "baseline": 45.4256,
+        "current": 46.8568,
+        "peak": 50.6867
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:valkey-cart:cpu_utilization",
+      "source": "metrics",
+      "service": "valkey-cart",
+      "title": "valkey-cart cpu utilization: 9.3% \u2192 9.3% (peak 10.3%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.081
+          ],
+          [
+            -44,
+            0.0819
+          ],
+          [
+            -43,
+            0.093
+          ],
+          [
+            -42,
+            0.0868
+          ],
+          [
+            -41,
+            0.089
+          ],
+          [
+            -40,
+            0.0952
+          ],
+          [
+            -39,
+            0.0984
+          ],
+          [
+            -38,
+            0.0937
+          ],
+          [
+            -37,
+            0.1035
+          ],
+          [
+            -36,
+            0.0991
+          ],
+          [
+            -35,
+            0.0874
+          ],
+          [
+            -34,
+            0.0845
+          ],
+          [
+            -33,
+            0.0942
+          ],
+          [
+            -32,
+            0.0892
+          ],
+          [
+            -31,
+            0.0979
+          ],
+          [
+            -30,
+            0.0919
+          ],
+          [
+            -29,
+            0.092
+          ],
+          [
+            -28,
+            0.0911
+          ],
+          [
+            -27,
+            0.086
+          ],
+          [
+            -26,
+            0.0951
+          ],
+          [
+            -25,
+            0.0909
+          ],
+          [
+            -24,
+            0.0891
+          ],
+          [
+            -23,
+            0.0897
+          ],
+          [
+            -22,
+            0.0908
+          ],
+          [
+            -21,
+            0.0925
+          ],
+          [
+            -20,
+            0.0861
+          ],
+          [
+            -19,
+            0.0898
+          ],
+          [
+            -18,
+            0.0833
+          ],
+          [
+            -17,
+            0.0984
+          ],
+          [
+            -16,
+            0.0928
+          ],
+          [
+            -15,
+            0.0956
+          ],
+          [
+            -14,
+            0.0914
+          ],
+          [
+            -13,
+            0.0965
+          ],
+          [
+            -12,
+            0.0842
+          ],
+          [
+            -11,
+            0.0833
+          ],
+          [
+            -10,
+            0.0882
+          ],
+          [
+            -9,
+            0.0884
+          ],
+          [
+            -8,
+            0.0942
+          ],
+          [
+            -7,
+            0.0858
+          ],
+          [
+            -6,
+            0.0917
+          ],
+          [
+            -5,
+            0.0857
+          ],
+          [
+            -4,
+            0.1001
+          ],
+          [
+            -3,
+            0.0978
+          ],
+          [
+            -2,
+            0.0952
+          ],
+          [
+            -1,
+            0.0867
+          ],
+          [
+            0,
+            0.0927
+          ]
+        ],
+        "baseline": 0.093,
+        "current": 0.093,
+        "peak": 0.1035
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:valkey-cart:error_rate",
+      "source": "metrics",
+      "service": "valkey-cart",
+      "title": "valkey-cart error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0045
+          ],
+          [
+            -44,
+            0.0039
+          ],
+          [
+            -43,
+            0.0043
+          ],
+          [
+            -42,
+            0.0037
+          ],
+          [
+            -41,
+            0.0038
+          ],
+          [
+            -40,
+            0.0038
+          ],
+          [
+            -39,
+            0.0026
+          ],
+          [
+            -38,
+            0.0032
+          ],
+          [
+            -37,
+            0.0043
+          ],
+          [
+            -36,
+            0.0045
+          ],
+          [
+            -35,
+            0.0039
+          ],
+          [
+            -34,
+            0.0041
+          ],
+          [
+            -33,
+            0.0041
+          ],
+          [
+            -32,
+            0.0047
+          ],
+          [
+            -31,
+            0.0047
+          ],
+          [
+            -30,
+            0.0033
+          ],
+          [
+            -29,
+            0.0037
+          ],
+          [
+            -28,
+            0.0032
+          ],
+          [
+            -27,
+            0.005
+          ],
+          [
+            -26,
+            0.0047
+          ],
+          [
+            -25,
+            0.0037
+          ],
+          [
+            -24,
+            0.0047
+          ],
+          [
+            -23,
+            0.003
+          ],
+          [
+            -22,
+            0.0047
+          ],
+          [
+            -21,
+            0.005
+          ],
+          [
+            -20,
+            0.003
+          ],
+          [
+            -19,
+            0.0047
+          ],
+          [
+            -18,
+            0.0044
+          ],
+          [
+            -17,
+            0.0044
+          ],
+          [
+            -16,
+            0.0047
+          ],
+          [
+            -15,
+            0.0037
+          ],
+          [
+            -14,
+            0.0044
+          ],
+          [
+            -13,
+            0.0029
+          ],
+          [
+            -12,
+            0.004
+          ],
+          [
+            -11,
+            0.0036
+          ],
+          [
+            -10,
+            0.0044
+          ],
+          [
+            -9,
+            0.0039
+          ],
+          [
+            -8,
+            0.003
+          ],
+          [
+            -7,
+            0.0049
+          ],
+          [
+            -6,
+            0.0041
+          ],
+          [
+            -5,
+            0.003
+          ],
+          [
+            -4,
+            0.004
+          ],
+          [
+            -3,
+            0.0048
+          ],
+          [
+            -2,
+            0.0044
+          ],
+          [
+            -1,
+            0.005
+          ],
+          [
+            0,
+            0.0047
+          ]
+        ],
+        "baseline": 0.0039,
+        "current": 0.0043,
+        "peak": 0.005
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:valkey-cart:memory_utilization",
+      "source": "metrics",
+      "service": "valkey-cart",
+      "title": "valkey-cart memory utilization: 30.9% \u2192 31.1% (peak 32.6%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3093
+          ],
+          [
+            -44,
+            0.3107
+          ],
+          [
+            -43,
+            0.3102
+          ],
+          [
+            -42,
+            0.3069
+          ],
+          [
+            -41,
+            0.3081
+          ],
+          [
+            -40,
+            0.3095
+          ],
+          [
+            -39,
+            0.3148
+          ],
+          [
+            -38,
+            0.3052
+          ],
+          [
+            -37,
+            0.3022
+          ],
+          [
+            -36,
+            0.3212
+          ],
+          [
+            -35,
+            0.3133
+          ],
+          [
+            -34,
+            0.3049
+          ],
+          [
+            -33,
+            0.3058
+          ],
+          [
+            -32,
+            0.3028
+          ],
+          [
+            -31,
+            0.317
+          ],
+          [
+            -30,
+            0.307
+          ],
+          [
+            -29,
+            0.3187
+          ],
+          [
+            -28,
+            0.3035
+          ],
+          [
+            -27,
+            0.3021
+          ],
+          [
+            -26,
+            0.3089
+          ],
+          [
+            -25,
+            0.3209
+          ],
+          [
+            -24,
+            0.3116
+          ],
+          [
+            -23,
+            0.3062
+          ],
+          [
+            -22,
+            0.3028
+          ],
+          [
+            -21,
+            0.2988
+          ],
+          [
+            -20,
+            0.3006
+          ],
+          [
+            -19,
+            0.3091
+          ],
+          [
+            -18,
+            0.3183
+          ],
+          [
+            -17,
+            0.3045
+          ],
+          [
+            -16,
+            0.3122
+          ],
+          [
+            -15,
+            0.3255
+          ],
+          [
+            -14,
+            0.3078
+          ],
+          [
+            -13,
+            0.3011
+          ],
+          [
+            -12,
+            0.3137
+          ],
+          [
+            -11,
+            0.2922
+          ],
+          [
+            -10,
+            0.3121
+          ],
+          [
+            -9,
+            0.3053
+          ],
+          [
+            -8,
+            0.3061
+          ],
+          [
+            -7,
+            0.3075
+          ],
+          [
+            -6,
+            0.3161
+          ],
+          [
+            -5,
+            0.318
+          ],
+          [
+            -4,
+            0.311
+          ],
+          [
+            -3,
+            0.3085
+          ],
+          [
+            -2,
+            0.3102
+          ],
+          [
+            -1,
+            0.309
+          ],
+          [
+            0,
+            0.3113
+          ]
+        ],
+        "baseline": 0.3095,
+        "current": 0.3113,
+        "peak": 0.3255
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:valkey-cart:p95_latency_ms",
+      "source": "metrics",
+      "service": "valkey-cart",
+      "title": "valkey-cart p95 latency ms: 3ms \u2192 3ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            3.3236
+          ],
+          [
+            -44,
+            2.7106
+          ],
+          [
+            -43,
+            3.035
+          ],
+          [
+            -42,
+            3.161
+          ],
+          [
+            -41,
+            3.0419
+          ],
+          [
+            -40,
+            2.6966
+          ],
+          [
+            -39,
+            3.1898
+          ],
+          [
+            -38,
+            2.6921
+          ],
+          [
+            -37,
+            3.0065
+          ],
+          [
+            -36,
+            3.1728
+          ],
+          [
+            -35,
+            3.0026
+          ],
+          [
+            -34,
+            2.8435
+          ],
+          [
+            -33,
+            2.9311
+          ],
+          [
+            -32,
+            2.6736
+          ],
+          [
+            -31,
+            2.891
+          ],
+          [
+            -30,
+            2.6527
+          ],
+          [
+            -29,
+            3.2537
+          ],
+          [
+            -28,
+            2.9454
+          ],
+          [
+            -27,
+            2.8614
+          ],
+          [
+            -26,
+            2.9692
+          ],
+          [
+            -25,
+            2.9663
+          ],
+          [
+            -24,
+            3.027
+          ],
+          [
+            -23,
+            3.1309
+          ],
+          [
+            -22,
+            2.8179
+          ],
+          [
+            -21,
+            3.133
+          ],
+          [
+            -20,
+            3.0165
+          ],
+          [
+            -19,
+            2.531
+          ],
+          [
+            -18,
+            2.9053
+          ],
+          [
+            -17,
+            2.7873
+          ],
+          [
+            -16,
+            3.1713
+          ],
+          [
+            -15,
+            2.4652
+          ],
+          [
+            -14,
+            3.2089
+          ],
+          [
+            -13,
+            2.9787
+          ],
+          [
+            -12,
+            3.0333
+          ],
+          [
+            -11,
+            2.9672
+          ],
+          [
+            -10,
+            3.0673
+          ],
+          [
+            -9,
+            3.4586
+          ],
+          [
+            -8,
+            3.2649
+          ],
+          [
+            -7,
+            2.9721
+          ],
+          [
+            -6,
+            3.0107
+          ],
+          [
+            -5,
+            2.8464
+          ],
+          [
+            -4,
+            3.0896
+          ],
+          [
+            -3,
+            3.1499
+          ],
+          [
+            -2,
+            2.6425
+          ],
+          [
+            -1,
+            3.0553
+          ],
+          [
+            0,
+            2.8714
+          ]
+        ],
+        "baseline": 3.035,
+        "current": 2.9425,
+        "peak": 3.4586
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:valkey-cart:request_rate",
+      "source": "metrics",
+      "service": "valkey-cart",
+      "title": "valkey-cart request rate: 58.5 req/s \u2192 60.7 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            58.4795
+          ],
+          [
+            -44,
+            58.4722
+          ],
+          [
+            -43,
+            61.8302
+          ],
+          [
+            -42,
+            58.6947
+          ],
+          [
+            -41,
+            56.9608
+          ],
+          [
+            -40,
+            55.0135
+          ],
+          [
+            -39,
+            61.274
+          ],
+          [
+            -38,
+            55.9119
+          ],
+          [
+            -37,
+            57.5433
+          ],
+          [
+            -36,
+            62.2589
+          ],
+          [
+            -35,
+            61.3497
+          ],
+          [
+            -34,
+            60.2644
+          ],
+          [
+            -33,
+            61.4628
+          ],
+          [
+            -32,
+            59.3205
+          ],
+          [
+            -31,
+            60.4734
+          ],
+          [
+            -30,
+            56.9811
+          ],
+          [
+            -29,
+            64.0002
+          ],
+          [
+            -28,
+            61.6462
+          ],
+          [
+            -27,
+            63.1883
+          ],
+          [
+            -26,
+            60.1565
+          ],
+          [
+            -25,
+            58.35
+          ],
+          [
+            -24,
+            60.8023
+          ],
+          [
+            -23,
+            59.7433
+          ],
+          [
+            -22,
+            60.8742
+          ],
+          [
+            -21,
+            56.6622
+          ],
+          [
+            -20,
+            56.805
+          ],
+          [
+            -19,
+            62.0089
+          ],
+          [
+            -18,
+            59.6527
+          ],
+          [
+            -17,
+            62.5409
+          ],
+          [
+            -16,
+            60.5955
+          ],
+          [
+            -15,
+            63.1597
+          ],
+          [
+            -14,
+            59.2064
+          ],
+          [
+            -13,
+            61.4387
+          ],
+          [
+            -12,
+            56.8989
+          ],
+          [
+            -11,
+            57.7485
+          ],
+          [
+            -10,
+            57.1967
+          ],
+          [
+            -9,
+            61.2771
+          ],
+          [
+            -8,
+            60.293
+          ],
+          [
+            -7,
+            58.3457
+          ],
+          [
+            -6,
+            57.6107
+          ],
+          [
+            -5,
+            65.2582
+          ],
+          [
+            -4,
+            60.2518
+          ],
+          [
+            -3,
+            57.5148
+          ],
+          [
+            -2,
+            59.3188
+          ],
+          [
+            -1,
+            61.1109
+          ],
+          [
+            0,
+            60.7544
+          ]
+        ],
+        "baseline": 58.4795,
+        "current": 60.7015,
+        "peak": 65.2582
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:cart:21093e7abf57",
+      "source": "traces",
+      "service": "cart",
+      "title": "Failing trace 21093e7abf57: cart",
+      "detail": "StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "21093e7abf574b8583dcf212e1543ba4",
+        "spans": [
+          {
+            "service": "cart",
+            "operation": "cart/handle",
+            "duration_ms": 453.8,
+            "error": true,
+            "message": "StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8",
+            "depth": 0,
+            "kind": "server"
+          }
+        ],
+        "origin": "cart"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:cart:summary",
+      "source": "traces",
+      "service": "cart",
+      "title": "45/200 sampled cart traces failed in the last 5m; top error origin: cart",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 45,
+        "error_origins": {
+          "cart": 44,
+          "valkey-cart": 1
+        },
+        "latency_contributors_ms": {
+          "cart": 480.0
+        },
+        "p95_ms": 505.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend:8cd1090ed269",
+      "source": "traces",
+      "service": "cart",
+      "title": "Failing trace 8cd1090ed269: frontend \u2192 cart",
+      "detail": "StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "8cd1090ed269612fd87e992f87e2f2b0",
+        "spans": [
+          {
+            "service": "frontend",
+            "operation": "frontend/handle",
+            "duration_ms": 404.2,
+            "error": true,
+            "message": "rpc error calling cart: code = Internal",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "cart",
+            "operation": "cart/handle",
+            "duration_ms": 447.8,
+            "error": true,
+            "message": "StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8",
+            "depth": 1,
+            "kind": "server"
+          }
+        ],
+        "origin": "cart"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend:summary",
+      "source": "traces",
+      "service": "frontend",
+      "title": "20/200 sampled frontend traces failed in the last 5m; top error origin: cart",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 20,
+        "error_origins": {
+          "cart": 19,
+          "email": 1
+        },
+        "latency_contributors_ms": {
+          "cart": 305.3
+        },
+        "p95_ms": 485.3
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_error_origin",
+      "service": "cart",
+      "score": 3.422,
+      "summary": "98% of failing cart traces end in cart",
+      "evidence_ids": [
+        "traces:cart:summary"
+      ],
+      "data": {
+        "share": 0.9777777777777777,
+        "count": 44
+      }
+    },
+    {
+      "kind": "trace_error_origin",
+      "service": "cart",
+      "score": 3.325,
+      "summary": "95% of failing frontend traces end in cart",
+      "evidence_ids": [
+        "traces:frontend:summary"
+      ],
+      "data": {
+        "share": 0.95,
+        "count": 19
+      }
+    },
+    {
+      "kind": "trace_latency_origin",
+      "service": "cart",
+      "score": 3.0,
+      "summary": "cart accounts for 100% of added latency in frontend traces (+305ms)",
+      "evidence_ids": [
+        "traces:frontend:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 305.3
+      }
+    },
+    {
+      "kind": "trace_latency_origin",
+      "service": "cart",
+      "score": 3.0,
+      "summary": "cart accounts for 100% of added latency in cart traces (+480ms)",
+      "evidence_ids": [
+        "traces:cart:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 480.0
+      }
+    },
+    {
+      "kind": "pool_exhaustion",
+      "service": "cart",
+      "score": 2.0,
+      "summary": "cart: StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5",
+      "evidence_ids": [
+        "logs:cart:1"
+      ],
+      "data": {
+        "count": 3880
+      }
+    },
+    {
+      "kind": "slow_queries",
+      "service": "cart",
+      "score": 1.5,
+      "summary": "cart: StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5",
+      "evidence_ids": [
+        "logs:cart:1"
+      ],
+      "data": {
+        "count": 3880
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "frontend",
+      "score": 1.0,
+      "summary": "frontend error rate 0.4% \u2192 11.0%",
+      "evidence_ids": [
+        "metrics:frontend:error_rate"
+      ],
+      "data": {
+        "baseline": 0.0041,
+        "current": 0.11
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "cart",
+      "score": 1.0,
+      "summary": "cart error rate 0.4% \u2192 21.3%",
+      "evidence_ids": [
+        "metrics:cart:error_rate"
+      ],
+      "data": {
+        "baseline": 0.0041,
+        "current": 0.2128
+      }
+    },
+    {
+      "kind": "error_logs",
+      "service": "cart",
+      "score": 1.0,
+      "summary": "3,880\u00d7 ERROR in cart: StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbou",
+      "evidence_ids": [
+        "logs:cart:1"
+      ],
+      "data": {
+        "count": 3880,
+        "message": "StackExchange.Redis.RedisTimeoutException: Timeout awaiting response (outbound=0KiB, inbound=0KiB, 5000ms elapsed), pool busy=8/8"
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "cart",
+      "score": 0.8,
+      "summary": "cart p95 26ms \u2192 505ms",
+      "evidence_ids": [
+        "metrics:cart:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 25.5486,
+        "current": 504.6096
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "email",
+      "score": 0.75,
+      "summary": "email rolled out 2.0.2 \u2192 2.0.3 24m before the alert",
+      "evidence_ids": [
+        "changes:email:deploy:0"
+      ],
+      "data": {
+        "minutes_before_alert": 24.1,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "frontend",
+      "score": 0.5,
+      "summary": "frontend p95 190ms \u2192 473ms",
+      "evidence_ids": [
+        "metrics:frontend:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 189.6276,
+        "current": 473.2732
+      }
+    },
+    {
+      "kind": "downstream_errors",
+      "service": "cart",
+      "score": 0.4,
+      "summary": "frontend logs 3,180 errors calling cart",
+      "evidence_ids": [
+        "logs:frontend:1"
+      ],
+      "data": {
+        "caller": "frontend"
+      }
+    },
+    {
+      "kind": "downstream_errors",
+      "service": "checkout",
+      "score": 0.4,
+      "summary": "frontend logs 480 errors calling checkout",
+      "evidence_ids": [
+        "logs:frontend:2"
+      ],
+      "data": {
+        "caller": "frontend"
+      }
+    },
+    {
+      "kind": "restarts",
+      "service": "valkey-cart",
+      "score": 0.3,
+      "summary": "pod/valkey-cart-ffd2c432-31817 restarted 1\u00d7",
+      "evidence_ids": [
+        "k8s:valkey-cart:pod_status"
+      ],
+      "data": {}
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 64.542
+    },
+    {
+      "id": "RB-valkey",
+      "title": "Cart / Valkey errors and timeouts",
+      "type": "runbook",
+      "services": [
+        "cart",
+        "valkey-cart"
+      ],
+      "category": "resource_exhaustion",
+      "date": null,
+      "snippet": "Decide whether the problem is the client pool or the server. - Server: `kubectl -n otel-demo exec deploy/valkey-cart -- valkey-cli --latency` and `SLOWLOG GET 10`. High latency or `BUSY` => datastore degradation. - Client: server latency flat but cart logs `pool busy=N/N` or \"timeout awaiting connection\" => pool exhaustion. Raise the pool size and restart cart.",
+      "score": 44.831
+    },
+    {
+      "id": "PM-2026-01-20",
+      "title": "Payment 1.7.3 release failed card charges with a TypeError",
+      "type": "postmortem",
+      "services": [
+        "payment",
+        "checkout"
+      ],
+      "category": "bad_deploy",
+      "date": "2026-01-20",
+      "snippet": "## Summary A payment release changed the shape of the `amount` object. 35% of charges failed with `TypeError: Cannot read properties of undefined (reading 'units')`. Checkout's error-rate alert fired 9 minutes after rollout. ## Root cause Bad deploy. The new code assumed `amount.units` was always set; older clients sent `amount.nanos` only. ## Resolution `kubectl rollout undo deployment/payment`. \u2026",
+      "score": 21.085
+    },
+    {
+      "id": "PM-2026-05-04",
+      "title": "Recommendation OOM loop from an unbounded product cache",
+      "type": "postmortem",
+      "services": [
+        "recommendation",
+        "frontend"
+      ],
+      "category": "memory_leak",
+      "date": "2026-05-04",
+      "snippet": "## Summary Recommendation was OOMKilled every ~7 minutes for two hours. Each restart dropped in-flight requests, so frontend saw periodic bursts of 5xx. Memory grew linearly from ~45% to 100% of the limit between restarts (sawtooth). ## Root cause An in-process cache keyed by product-id list had no eviction. The `recommendationCacheFailure` flag reproduces this. ## Resolution Restarted the deploym\u2026",
+      "score": 14.992
+    },
+    {
+      "id": "PM-2026-08-02",
+      "title": "Currency crash loop after a release missing its data file",
+      "type": "postmortem",
+      "services": [
+        "currency",
+        "frontend",
+        "checkout"
+      ],
+      "category": "crash_loop",
+      "date": "2026-08-02",
+      "snippet": "## Summary Currency 2.0.1 shipped without `currency_conversion.json`. Pods exited on start-up (`std::runtime_error`), entered CrashLoopBackOff and frontend errors reached 60% because almost every page converts prices. ## Root cause Crash loop introduced by a bad release (packaging error). ## Resolution `kubectl rollout undo deployment/currency`. ## Lessons - `waiting: CrashLoopBackOff` + near-zero\u2026",
+      "score": 13.247
+    }
+  ],
+  "services_examined": [
+    "frontend",
+    "cart",
+    "valkey-cart"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "cart",
+    "expected_category": "resource_exhaustion",
+    "predicted_service": "cart",
+    "predicted_category": "resource_exhaustion",
+    "confidence": 0.95
+  },
+  "slack_posted": false
+}

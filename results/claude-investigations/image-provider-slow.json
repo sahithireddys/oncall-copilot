@@ -1,0 +1,2408 @@
+{
+  "id": "1305a06e470c",
+  "alert": {
+    "name": "FrontendProxyLatencyHigh",
+    "service": "frontend-proxy",
+    "severity": "warning",
+    "summary": "frontend-proxy p95 latency > 1s for 10m",
+    "labels": {
+      "scenario_id": "image-provider-slow"
+    },
+    "starts_at": "2026-09-30T02:51:29.199264Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "image-provider-slow",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:51:29.200017Z",
+  "completed_at": "2026-09-30T02:51:57.353733Z",
+  "duration_ms": 28152,
+  "hypothesis": {
+    "root_cause_service": "image-provider",
+    "category": "network_latency",
+    "title": "image-provider network latency from Envoy fault injection (imageSlowLoad)",
+    "summary": "Frontend-proxy p95 latency spiked from 211ms to 5015ms because calls to image-provider are taking 5000ms on the client side, while image-provider's own p95 remains healthy at 12ms. This discrepancy indicates network latency on the path to image-provider, not a problem in image-provider itself. The pattern matches Envoy fault injection via the imageSlowLoad flag, which is known to affect image-provider.",
+    "reasoning": "The alert fired on frontend-proxy p95 latency jumping from ~211ms to ~5015ms. Traces show that 100% of the added latency (+5000ms) comes from calls to image-provider. The slow trace 04fcadc37b3d shows a 5012ms client-side span calling image-provider, but image-provider's own p95 latency remains healthy at 12ms. This is a classic network_latency pattern: the caller's client span is slow (5012ms) but the callee's server span is fast (12ms), meaning time is spent on the network path, not in image-provider's processing. The ERROR logs about \"grpc: received message larger than max (4194304 vs. 4194304)\" started 44 minutes before the alert and suggest a gRPC message size issue, but the latency spike only began 10 minutes before the alert. The accounting deploy (2.0.2 \u2192 2.0.3) happened 11 minutes before the alert but accounting is not on the frontend-proxy call path, so it's a red herring. Runbook RB-network specifically mentions checking Envoy fault injection for image-provider using the `imageSlowLoad` flag, which matches this pattern perfectly. The root cause is network latency injected on the path to image-provider, likely via Envoy fault injection.",
+    "confidence": 0.85,
+    "supporting_evidence": [
+      {
+        "evidence_id": "traces:frontend-proxy:04fcadc37b3d",
+        "why_it_matters": "Shows 5012ms spent in the client-side span calling image-provider, indicating the delay is on the network path to image-provider, not in image-provider's processing."
+      },
+      {
+        "evidence_id": "metrics:image-provider:p95_latency_ms",
+        "why_it_matters": "Image-provider's own p95 latency remains healthy at 12ms, proving the service itself is not slow and the problem is network latency on the inbound path."
+      },
+      {
+        "evidence_id": "traces:frontend-proxy:summary",
+        "why_it_matters": "Confirms image-provider accounts for 100% of the added latency (+5000ms) in frontend-proxy traces, pinpointing the source of the slowdown."
+      },
+      {
+        "evidence_id": "metrics:frontend-proxy:p95_latency_ms",
+        "why_it_matters": "Documents the latency spike from 211ms to 5015ms at the time of the alert, matching the 5000ms added by image-provider calls."
+      },
+      {
+        "evidence_id": "logs:frontend-proxy:1",
+        "why_it_matters": "1,440 warnings about requests to image-provider taking 5012ms confirm the consistent 5-second delay pattern started 10 minutes before the alert."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Check for Envoy fault injection on image-provider (imageSlowLoad flag)",
+        "command": "kubectl get envoyfilter -n otel-demo -o yaml | grep -A 20 imageSlowLoad",
+        "risk": "low",
+        "rationale": "Runbook RB-network specifically mentions Envoy fault injection using imageSlowLoad for image-provider. This is the most likely cause of the 5-second network delay."
+      },
+      {
+        "title": "Check for active Chaos Mesh network experiments",
+        "command": "kubectl get networkchaos -A",
+        "risk": "low",
+        "rationale": "Network chaos experiments can inject latency or packet loss. This is a safe read-only check recommended by the network latency runbook."
+      },
+      {
+        "title": "Verify image-provider pod placement and node health",
+        "command": "kubectl get pods -n otel-demo -l app=image-provider -o wide",
+        "risk": "low",
+        "rationale": "Check if image-provider pods are on a degraded node, though less likely given the consistent 5-second delay pattern."
+      }
+    ],
+    "related_documents": [
+      "RB-network"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "frontend-proxy",
+        "category": "config_change",
+        "why_less_likely": "The gRPC message size errors started 44 minutes before the latency spike, and there's no evidence of a config change in frontend-proxy at the time of the latency spike (10 minutes before alert). The message size issue appears unrelated to the 5-second delay pattern."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:accounting:deploy:0",
+      "source": "changes",
+      "service": "accounting",
+      "title": "deployment/accounting rolled out 2.0.2 \u2192 2.0.3 (11m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/accounting",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 10.6
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend-proxy:1",
+      "source": "logs",
+      "service": "frontend-proxy",
+      "title": "1,440\u00d7 WARN request to image-provider took 5012ms",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "request to image-provider took 5012ms",
+        "level": "WARN",
+        "count": 1440,
+        "sample": "request to image-provider took 5012ms",
+        "first_seen_min": -10
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend-proxy:2",
+      "source": "logs",
+      "service": "frontend-proxy",
+      "title": "42\u00d7 ERROR grpc: received message larger than max (4194304 vs. 4194304)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "grpc: received message larger than max (4194304 vs. 4194304)",
+        "level": "ERROR",
+        "count": 42,
+        "sample": "grpc: received message larger than max (4194304 vs. 4194304)",
+        "first_seen_min": -44.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend-proxy:cpu_utilization",
+      "source": "metrics",
+      "service": "frontend-proxy",
+      "title": "frontend-proxy cpu utilization: 21.4% \u2192 22.3% (peak 24.2%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2139
+          ],
+          [
+            -44,
+            0.197
+          ],
+          [
+            -43,
+            0.2119
+          ],
+          [
+            -42,
+            0.2284
+          ],
+          [
+            -41,
+            0.2177
+          ],
+          [
+            -40,
+            0.2269
+          ],
+          [
+            -39,
+            0.2138
+          ],
+          [
+            -38,
+            0.2022
+          ],
+          [
+            -37,
+            0.2048
+          ],
+          [
+            -36,
+            0.2082
+          ],
+          [
+            -35,
+            0.2235
+          ],
+          [
+            -34,
+            0.233
+          ],
+          [
+            -33,
+            0.2144
+          ],
+          [
+            -32,
+            0.2054
+          ],
+          [
+            -31,
+            0.2119
+          ],
+          [
+            -30,
+            0.2117
+          ],
+          [
+            -29,
+            0.2151
+          ],
+          [
+            -28,
+            0.2031
+          ],
+          [
+            -27,
+            0.218
+          ],
+          [
+            -26,
+            0.2177
+          ],
+          [
+            -25,
+            0.2122
+          ],
+          [
+            -24,
+            0.1976
+          ],
+          [
+            -23,
+            0.2159
+          ],
+          [
+            -22,
+            0.2144
+          ],
+          [
+            -21,
+            0.2317
+          ],
+          [
+            -20,
+            0.2232
+          ],
+          [
+            -19,
+            0.2293
+          ],
+          [
+            -18,
+            0.2067
+          ],
+          [
+            -17,
+            0.2084
+          ],
+          [
+            -16,
+            0.233
+          ],
+          [
+            -15,
+            0.2254
+          ],
+          [
+            -14,
+            0.2419
+          ],
+          [
+            -13,
+            0.211
+          ],
+          [
+            -12,
+            0.2179
+          ],
+          [
+            -11,
+            0.2282
+          ],
+          [
+            -10,
+            0.2232
+          ],
+          [
+            -9,
+            0.2381
+          ],
+          [
+            -8,
+            0.2258
+          ],
+          [
+            -7,
+            0.238
+          ],
+          [
+            -6,
+            0.2056
+          ],
+          [
+            -5,
+            0.2279
+          ],
+          [
+            -4,
+            0.2208
+          ],
+          [
+            -3,
+            0.2279
+          ],
+          [
+            -2,
+            0.2177
+          ],
+          [
+            -1,
+            0.2196
+          ],
+          [
+            0,
+            0.2241
+          ]
+        ],
+        "baseline": 0.2138,
+        "current": 0.223,
+        "peak": 0.2419
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend-proxy:error_rate",
+      "source": "metrics",
+      "service": "frontend-proxy",
+      "title": "frontend-proxy error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0046
+          ],
+          [
+            -44,
+            0.0048
+          ],
+          [
+            -43,
+            0.0039
+          ],
+          [
+            -42,
+            0.0033
+          ],
+          [
+            -41,
+            0.0032
+          ],
+          [
+            -40,
+            0.0048
+          ],
+          [
+            -39,
+            0.0039
+          ],
+          [
+            -38,
+            0.0051
+          ],
+          [
+            -37,
+            0.0046
+          ],
+          [
+            -36,
+            0.0034
+          ],
+          [
+            -35,
+            0.0045
+          ],
+          [
+            -34,
+            0.0034
+          ],
+          [
+            -33,
+            0.0041
+          ],
+          [
+            -32,
+            0.004
+          ],
+          [
+            -31,
+            0.0048
+          ],
+          [
+            -30,
+            0.0041
+          ],
+          [
+            -29,
+            0.0042
+          ],
+          [
+            -28,
+            0.0042
+          ],
+          [
+            -27,
+            0.0037
+          ],
+          [
+            -26,
+            0.0045
+          ],
+          [
+            -25,
+            0.0039
+          ],
+          [
+            -24,
+            0.003
+          ],
+          [
+            -23,
+            0.0044
+          ],
+          [
+            -22,
+            0.0029
+          ],
+          [
+            -21,
+            0.0036
+          ],
+          [
+            -20,
+            0.0038
+          ],
+          [
+            -19,
+            0.0037
+          ],
+          [
+            -18,
+            0.0048
+          ],
+          [
+            -17,
+            0.0046
+          ],
+          [
+            -16,
+            0.005
+          ],
+          [
+            -15,
+            0.0024
+          ],
+          [
+            -14,
+            0.0031
+          ],
+          [
+            -13,
+            0.0039
+          ],
+          [
+            -12,
+            0.0049
+          ],
+          [
+            -11,
+            0.0033
+          ],
+          [
+            -10,
+            0.0041
+          ],
+          [
+            -9,
+            0.0045
+          ],
+          [
+            -8,
+            0.0039
+          ],
+          [
+            -7,
+            0.0033
+          ],
+          [
+            -6,
+            0.0036
+          ],
+          [
+            -5,
+            0.0049
+          ],
+          [
+            -4,
+            0.004
+          ],
+          [
+            -3,
+            0.0042
+          ],
+          [
+            -2,
+            0.0038
+          ],
+          [
+            -1,
+            0.0036
+          ],
+          [
+            0,
+            0.0034
+          ]
+        ],
+        "baseline": 0.0045,
+        "current": 0.004,
+        "peak": 0.0051
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend-proxy:memory_utilization",
+      "source": "metrics",
+      "service": "frontend-proxy",
+      "title": "frontend-proxy memory utilization: 35.4% \u2192 35.2% (peak 37.2%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3529
+          ],
+          [
+            -44,
+            0.3478
+          ],
+          [
+            -43,
+            0.3459
+          ],
+          [
+            -42,
+            0.3484
+          ],
+          [
+            -41,
+            0.3469
+          ],
+          [
+            -40,
+            0.3565
+          ],
+          [
+            -39,
+            0.354
+          ],
+          [
+            -38,
+            0.355
+          ],
+          [
+            -37,
+            0.3724
+          ],
+          [
+            -36,
+            0.3607
+          ],
+          [
+            -35,
+            0.3541
+          ],
+          [
+            -34,
+            0.3507
+          ],
+          [
+            -33,
+            0.3483
+          ],
+          [
+            -32,
+            0.3708
+          ],
+          [
+            -31,
+            0.3489
+          ],
+          [
+            -30,
+            0.3604
+          ],
+          [
+            -29,
+            0.3594
+          ],
+          [
+            -28,
+            0.3657
+          ],
+          [
+            -27,
+            0.3612
+          ],
+          [
+            -26,
+            0.3477
+          ],
+          [
+            -25,
+            0.348
+          ],
+          [
+            -24,
+            0.3523
+          ],
+          [
+            -23,
+            0.3457
+          ],
+          [
+            -22,
+            0.3561
+          ],
+          [
+            -21,
+            0.3437
+          ],
+          [
+            -20,
+            0.3499
+          ],
+          [
+            -19,
+            0.3498
+          ],
+          [
+            -18,
+            0.3476
+          ],
+          [
+            -17,
+            0.3473
+          ],
+          [
+            -16,
+            0.3611
+          ],
+          [
+            -15,
+            0.3577
+          ],
+          [
+            -14,
+            0.351
+          ],
+          [
+            -13,
+            0.3512
+          ],
+          [
+            -12,
+            0.3543
+          ],
+          [
+            -11,
+            0.3567
+          ],
+          [
+            -10,
+            0.353
+          ],
+          [
+            -9,
+            0.338
+          ],
+          [
+            -8,
+            0.3479
+          ],
+          [
+            -7,
+            0.3553
+          ],
+          [
+            -6,
+            0.3529
+          ],
+          [
+            -5,
+            0.3551
+          ],
+          [
+            -4,
+            0.3563
+          ],
+          [
+            -3,
+            0.3491
+          ],
+          [
+            -2,
+            0.351
+          ],
+          [
+            -1,
+            0.3568
+          ],
+          [
+            0,
+            0.3465
+          ]
+        ],
+        "baseline": 0.354,
+        "current": 0.3525,
+        "peak": 0.3724
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend-proxy:p95_latency_ms",
+      "source": "metrics",
+      "service": "frontend-proxy",
+      "title": "frontend-proxy p95 latency ms: 211ms \u2192 5015ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            205.1497
+          ],
+          [
+            -44,
+            214.4922
+          ],
+          [
+            -43,
+            227.4845
+          ],
+          [
+            -42,
+            191.9004
+          ],
+          [
+            -41,
+            210.8233
+          ],
+          [
+            -40,
+            212.8428
+          ],
+          [
+            -39,
+            212.4662
+          ],
+          [
+            -38,
+            196.841
+          ],
+          [
+            -37,
+            206.7814
+          ],
+          [
+            -36,
+            210.0936
+          ],
+          [
+            -35,
+            232.2045
+          ],
+          [
+            -34,
+            195.5825
+          ],
+          [
+            -33,
+            203.4955
+          ],
+          [
+            -32,
+            199.3329
+          ],
+          [
+            -31,
+            219.3574
+          ],
+          [
+            -30,
+            222.8556
+          ],
+          [
+            -29,
+            198.0269
+          ],
+          [
+            -28,
+            231.3784
+          ],
+          [
+            -27,
+            205.8693
+          ],
+          [
+            -26,
+            207.0366
+          ],
+          [
+            -25,
+            226.6499
+          ],
+          [
+            -24,
+            188.9817
+          ],
+          [
+            -23,
+            214.4768
+          ],
+          [
+            -22,
+            215.1379
+          ],
+          [
+            -21,
+            225.7008
+          ],
+          [
+            -20,
+            209.8061
+          ],
+          [
+            -19,
+            211.8715
+          ],
+          [
+            -18,
+            203.8216
+          ],
+          [
+            -17,
+            226.0068
+          ],
+          [
+            -16,
+            207.8722
+          ],
+          [
+            -15,
+            216.7708
+          ],
+          [
+            -14,
+            215.1491
+          ],
+          [
+            -13,
+            210.9375
+          ],
+          [
+            -12,
+            181.1789
+          ],
+          [
+            -11,
+            230.8312
+          ],
+          [
+            -10,
+            201.4268
+          ],
+          [
+            -9,
+            2420.0508
+          ],
+          [
+            -8,
+            5430.1059
+          ],
+          [
+            -7,
+            4951.6729
+          ],
+          [
+            -6,
+            5289.1522
+          ],
+          [
+            -5,
+            4848.526
+          ],
+          [
+            -4,
+            5173.0143
+          ],
+          [
+            -3,
+            5236.5978
+          ],
+          [
+            -2,
+            4642.3519
+          ],
+          [
+            -1,
+            5009.4056
+          ],
+          [
+            0,
+            5178.8099
+          ]
+        ],
+        "baseline": 210.8233,
+        "current": 5014.7842,
+        "peak": 5430.1059
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend-proxy:request_rate",
+      "source": "metrics",
+      "service": "frontend-proxy",
+      "title": "frontend-proxy request rate: 49.1 req/s \u2192 47.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            46.5573
+          ],
+          [
+            -44,
+            49.3522
+          ],
+          [
+            -43,
+            50.714
+          ],
+          [
+            -42,
+            48.282
+          ],
+          [
+            -41,
+            42.6517
+          ],
+          [
+            -40,
+            48.7187
+          ],
+          [
+            -39,
+            49.0548
+          ],
+          [
+            -38,
+            52.6162
+          ],
+          [
+            -37,
+            46.6964
+          ],
+          [
+            -36,
+            50.7223
+          ],
+          [
+            -35,
+            50.4066
+          ],
+          [
+            -34,
+            47.5763
+          ],
+          [
+            -33,
+            48.8216
+          ],
+          [
+            -32,
+            49.6694
+          ],
+          [
+            -31,
+            49.8219
+          ],
+          [
+            -30,
+            42.0032
+          ],
+          [
+            -29,
+            49.5766
+          ],
+          [
+            -28,
+            44.6258
+          ],
+          [
+            -27,
+            51.2301
+          ],
+          [
+            -26,
+            47.4574
+          ],
+          [
+            -25,
+            45.6488
+          ],
+          [
+            -24,
+            48.5125
+          ],
+          [
+            -23,
+            52.1089
+          ],
+          [
+            -22,
+            50.2947
+          ],
+          [
+            -21,
+            49.3235
+          ],
+          [
+            -20,
+            48.1447
+          ],
+          [
+            -19,
+            48.345
+          ],
+          [
+            -18,
+            47.3035
+          ],
+          [
+            -17,
+            47.3627
+          ],
+          [
+            -16,
+            45.5437
+          ],
+          [
+            -15,
+            43.6425
+          ],
+          [
+            -14,
+            52.8943
+          ],
+          [
+            -13,
+            44.0994
+          ],
+          [
+            -12,
+            51.9904
+          ],
+          [
+            -11,
+            48.0805
+          ],
+          [
+            -10,
+            48.7927
+          ],
+          [
+            -9,
+            48.5984
+          ],
+          [
+            -8,
+            44.6425
+          ],
+          [
+            -7,
+            46.6268
+          ],
+          [
+            -6,
+            43.7502
+          ],
+          [
+            -5,
+            45.3116
+          ],
+          [
+            -4,
+            46.5997
+          ],
+          [
+            -3,
+            47.1885
+          ],
+          [
+            -2,
+            46.6395
+          ],
+          [
+            -1,
+            47.0202
+          ],
+          [
+            0,
+            49.7153
+          ]
+        ],
+        "baseline": 49.0548,
+        "current": 47.0791,
+        "peak": 52.8943
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:image-provider:cpu_utilization",
+      "source": "metrics",
+      "service": "image-provider",
+      "title": "image-provider cpu utilization: 5.1% \u2192 5.0% (peak 5.6%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0512
+          ],
+          [
+            -44,
+            0.0537
+          ],
+          [
+            -43,
+            0.0508
+          ],
+          [
+            -42,
+            0.0484
+          ],
+          [
+            -41,
+            0.0525
+          ],
+          [
+            -40,
+            0.0485
+          ],
+          [
+            -39,
+            0.0477
+          ],
+          [
+            -38,
+            0.0518
+          ],
+          [
+            -37,
+            0.05
+          ],
+          [
+            -36,
+            0.054
+          ],
+          [
+            -35,
+            0.0466
+          ],
+          [
+            -34,
+            0.0529
+          ],
+          [
+            -33,
+            0.0533
+          ],
+          [
+            -32,
+            0.0513
+          ],
+          [
+            -31,
+            0.0487
+          ],
+          [
+            -30,
+            0.047
+          ],
+          [
+            -29,
+            0.0528
+          ],
+          [
+            -28,
+            0.0523
+          ],
+          [
+            -27,
+            0.05
+          ],
+          [
+            -26,
+            0.0517
+          ],
+          [
+            -25,
+            0.0415
+          ],
+          [
+            -24,
+            0.0519
+          ],
+          [
+            -23,
+            0.0474
+          ],
+          [
+            -22,
+            0.0489
+          ],
+          [
+            -21,
+            0.0462
+          ],
+          [
+            -20,
+            0.0519
+          ],
+          [
+            -19,
+            0.0509
+          ],
+          [
+            -18,
+            0.0495
+          ],
+          [
+            -17,
+            0.0519
+          ],
+          [
+            -16,
+            0.0517
+          ],
+          [
+            -15,
+            0.0546
+          ],
+          [
+            -14,
+            0.056
+          ],
+          [
+            -13,
+            0.0473
+          ],
+          [
+            -12,
+            0.0493
+          ],
+          [
+            -11,
+            0.0519
+          ],
+          [
+            -10,
+            0.0504
+          ],
+          [
+            -9,
+            0.0504
+          ],
+          [
+            -8,
+            0.0498
+          ],
+          [
+            -7,
+            0.05
+          ],
+          [
+            -6,
+            0.0538
+          ],
+          [
+            -5,
+            0.0491
+          ],
+          [
+            -4,
+            0.0501
+          ],
+          [
+            -3,
+            0.0502
+          ],
+          [
+            -2,
+            0.052
+          ],
+          [
+            -1,
+            0.05
+          ],
+          [
+            0,
+            0.0479
+          ]
+        ],
+        "baseline": 0.0508,
+        "current": 0.0499,
+        "peak": 0.056
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:image-provider:error_rate",
+      "source": "metrics",
+      "service": "image-provider",
+      "title": "image-provider error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.004
+          ],
+          [
+            -44,
+            0.0044
+          ],
+          [
+            -43,
+            0.0027
+          ],
+          [
+            -42,
+            0.0037
+          ],
+          [
+            -41,
+            0.0036
+          ],
+          [
+            -40,
+            0.0042
+          ],
+          [
+            -39,
+            0.0028
+          ],
+          [
+            -38,
+            0.0047
+          ],
+          [
+            -37,
+            0.0035
+          ],
+          [
+            -36,
+            0.0048
+          ],
+          [
+            -35,
+            0.0044
+          ],
+          [
+            -34,
+            0.0035
+          ],
+          [
+            -33,
+            0.0044
+          ],
+          [
+            -32,
+            0.0034
+          ],
+          [
+            -31,
+            0.0033
+          ],
+          [
+            -30,
+            0.0044
+          ],
+          [
+            -29,
+            0.0035
+          ],
+          [
+            -28,
+            0.0039
+          ],
+          [
+            -27,
+            0.0046
+          ],
+          [
+            -26,
+            0.0037
+          ],
+          [
+            -25,
+            0.0034
+          ],
+          [
+            -24,
+            0.0041
+          ],
+          [
+            -23,
+            0.0042
+          ],
+          [
+            -22,
+            0.004
+          ],
+          [
+            -21,
+            0.0045
+          ],
+          [
+            -20,
+            0.0044
+          ],
+          [
+            -19,
+            0.0045
+          ],
+          [
+            -18,
+            0.0042
+          ],
+          [
+            -17,
+            0.0045
+          ],
+          [
+            -16,
+            0.0031
+          ],
+          [
+            -15,
+            0.0048
+          ],
+          [
+            -14,
+            0.0043
+          ],
+          [
+            -13,
+            0.0034
+          ],
+          [
+            -12,
+            0.0047
+          ],
+          [
+            -11,
+            0.0038
+          ],
+          [
+            -10,
+            0.0046
+          ],
+          [
+            -9,
+            0.0034
+          ],
+          [
+            -8,
+            0.0029
+          ],
+          [
+            -7,
+            0.0038
+          ],
+          [
+            -6,
+            0.005
+          ],
+          [
+            -5,
+            0.0041
+          ],
+          [
+            -4,
+            0.0033
+          ],
+          [
+            -3,
+            0.0036
+          ],
+          [
+            -2,
+            0.0042
+          ],
+          [
+            -1,
+            0.0031
+          ],
+          [
+            0,
+            0.0048
+          ]
+        ],
+        "baseline": 0.004,
+        "current": 0.0038,
+        "peak": 0.005
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:image-provider:memory_utilization",
+      "source": "metrics",
+      "service": "image-provider",
+      "title": "image-provider memory utilization: 20.2% \u2192 20.1% (peak 20.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2091
+          ],
+          [
+            -44,
+            0.1944
+          ],
+          [
+            -43,
+            0.2012
+          ],
+          [
+            -42,
+            0.1972
+          ],
+          [
+            -41,
+            0.2019
+          ],
+          [
+            -40,
+            0.2053
+          ],
+          [
+            -39,
+            0.2041
+          ],
+          [
+            -38,
+            0.2015
+          ],
+          [
+            -37,
+            0.2061
+          ],
+          [
+            -36,
+            0.1987
+          ],
+          [
+            -35,
+            0.2035
+          ],
+          [
+            -34,
+            0.2
+          ],
+          [
+            -33,
+            0.1988
+          ],
+          [
+            -32,
+            0.1992
+          ],
+          [
+            -31,
+            0.1986
+          ],
+          [
+            -30,
+            0.202
+          ],
+          [
+            -29,
+            0.2056
+          ],
+          [
+            -28,
+            0.1985
+          ],
+          [
+            -27,
+            0.2073
+          ],
+          [
+            -26,
+            0.2056
+          ],
+          [
+            -25,
+            0.1971
+          ],
+          [
+            -24,
+            0.2066
+          ],
+          [
+            -23,
+            0.1987
+          ],
+          [
+            -22,
+            0.1994
+          ],
+          [
+            -21,
+            0.2011
+          ],
+          [
+            -20,
+            0.1966
+          ],
+          [
+            -19,
+            0.2019
+          ],
+          [
+            -18,
+            0.2024
+          ],
+          [
+            -17,
+            0.2009
+          ],
+          [
+            -16,
+            0.1979
+          ],
+          [
+            -15,
+            0.1959
+          ],
+          [
+            -14,
+            0.1906
+          ],
+          [
+            -13,
+            0.1952
+          ],
+          [
+            -12,
+            0.2086
+          ],
+          [
+            -11,
+            0.2058
+          ],
+          [
+            -10,
+            0.204
+          ],
+          [
+            -9,
+            0.1986
+          ],
+          [
+            -8,
+            0.1991
+          ],
+          [
+            -7,
+            0.2009
+          ],
+          [
+            -6,
+            0.1973
+          ],
+          [
+            -5,
+            0.2027
+          ],
+          [
+            -4,
+            0.1991
+          ],
+          [
+            -3,
+            0.207
+          ],
+          [
+            -2,
+            0.2005
+          ],
+          [
+            -1,
+            0.2001
+          ],
+          [
+            0,
+            0.195
+          ]
+        ],
+        "baseline": 0.2019,
+        "current": 0.2007,
+        "peak": 0.2091
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:image-provider:p95_latency_ms",
+      "source": "metrics",
+      "service": "image-provider",
+      "title": "image-provider p95 latency ms: 13ms \u2192 12ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            12.7983
+          ],
+          [
+            -44,
+            10.4447
+          ],
+          [
+            -43,
+            10.941
+          ],
+          [
+            -42,
+            11.8007
+          ],
+          [
+            -41,
+            12.8998
+          ],
+          [
+            -40,
+            12.7742
+          ],
+          [
+            -39,
+            13.0666
+          ],
+          [
+            -38,
+            12.5287
+          ],
+          [
+            -37,
+            11.6581
+          ],
+          [
+            -36,
+            12.1315
+          ],
+          [
+            -35,
+            13.2458
+          ],
+          [
+            -34,
+            11.8126
+          ],
+          [
+            -33,
+            13.1643
+          ],
+          [
+            -32,
+            12.4785
+          ],
+          [
+            -31,
+            13.2903
+          ],
+          [
+            -30,
+            12.4303
+          ],
+          [
+            -29,
+            13.3736
+          ],
+          [
+            -28,
+            11.5033
+          ],
+          [
+            -27,
+            10.9032
+          ],
+          [
+            -26,
+            11.9657
+          ],
+          [
+            -25,
+            11.0532
+          ],
+          [
+            -24,
+            12.0072
+          ],
+          [
+            -23,
+            11.9787
+          ],
+          [
+            -22,
+            12.7265
+          ],
+          [
+            -21,
+            14.1898
+          ],
+          [
+            -20,
+            10.7927
+          ],
+          [
+            -19,
+            12.4625
+          ],
+          [
+            -18,
+            11.8838
+          ],
+          [
+            -17,
+            13.7311
+          ],
+          [
+            -16,
+            12.7308
+          ],
+          [
+            -15,
+            11.8124
+          ],
+          [
+            -14,
+            12.3091
+          ],
+          [
+            -13,
+            12.5336
+          ],
+          [
+            -12,
+            11.3285
+          ],
+          [
+            -11,
+            12.557
+          ],
+          [
+            -10,
+            13.2512
+          ],
+          [
+            -9,
+            11.3868
+          ],
+          [
+            -8,
+            12.062
+          ],
+          [
+            -7,
+            12.4677
+          ],
+          [
+            -6,
+            11.159
+          ],
+          [
+            -5,
+            12.4332
+          ],
+          [
+            -4,
+            10.9835
+          ],
+          [
+            -3,
+            11.9281
+          ],
+          [
+            -2,
+            12.1148
+          ],
+          [
+            -1,
+            13.1347
+          ],
+          [
+            0,
+            10.9829
+          ]
+        ],
+        "baseline": 12.5287,
+        "current": 11.9295,
+        "peak": 14.1898
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:image-provider:request_rate",
+      "source": "metrics",
+      "service": "image-provider",
+      "title": "image-provider request rate: 29.2 req/s \u2192 29.7 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            30.4498
+          ],
+          [
+            -44,
+            28.5707
+          ],
+          [
+            -43,
+            29.5742
+          ],
+          [
+            -42,
+            29.1843
+          ],
+          [
+            -41,
+            28.3644
+          ],
+          [
+            -40,
+            30.3141
+          ],
+          [
+            -39,
+            31.0012
+          ],
+          [
+            -38,
+            29.0221
+          ],
+          [
+            -37,
+            32.5185
+          ],
+          [
+            -36,
+            28.5861
+          ],
+          [
+            -35,
+            28.606
+          ],
+          [
+            -34,
+            31.4803
+          ],
+          [
+            -33,
+            29.502
+          ],
+          [
+            -32,
+            28.6759
+          ],
+          [
+            -31,
+            30.6228
+          ],
+          [
+            -30,
+            28.93
+          ],
+          [
+            -29,
+            32.8315
+          ],
+          [
+            -28,
+            31.4965
+          ],
+          [
+            -27,
+            29.2753
+          ],
+          [
+            -26,
+            28.8185
+          ],
+          [
+            -25,
+            30.5636
+          ],
+          [
+            -24,
+            30.034
+          ],
+          [
+            -23,
+            30.3551
+          ],
+          [
+            -22,
+            30.6509
+          ],
+          [
+            -21,
+            29.0713
+          ],
+          [
+            -20,
+            32.0332
+          ],
+          [
+            -19,
+            29.0885
+          ],
+          [
+            -18,
+            29.9536
+          ],
+          [
+            -17,
+            31.7535
+          ],
+          [
+            -16,
+            29.9473
+          ],
+          [
+            -15,
+            28.3371
+          ],
+          [
+            -14,
+            31.0656
+          ],
+          [
+            -13,
+            28.5363
+          ],
+          [
+            -12,
+            29.4585
+          ],
+          [
+            -11,
+            31.8747
+          ],
+          [
+            -10,
+            31.979
+          ],
+          [
+            -9,
+            30.2234
+          ],
+          [
+            -8,
+            30.9828
+          ],
+          [
+            -7,
+            29.7902
+          ],
+          [
+            -6,
+            31.3156
+          ],
+          [
+            -5,
+            28.8597
+          ],
+          [
+            -4,
+            29.7037
+          ],
+          [
+            -3,
+            31.0086
+          ],
+          [
+            -2,
+            27.2972
+          ],
+          [
+            -1,
+            29.7586
+          ],
+          [
+            0,
+            31.7044
+          ]
+        ],
+        "baseline": 29.1843,
+        "current": 29.722,
+        "peak": 32.8315
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend-proxy:04fcadc37b3d",
+      "source": "traces",
+      "service": "image-provider",
+      "title": "Slow trace 04fcadc37b3d: 2 spans, 5012ms in image-provider",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "04fcadc37b3d92f05c50f1e030b77e89",
+        "spans": [
+          {
+            "service": "frontend-proxy",
+            "operation": "frontend-proxy/handle",
+            "duration_ms": 5144.3,
+            "error": false,
+            "message": "",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "frontend-proxy",
+            "operation": "image-provider.Call",
+            "duration_ms": 5012.0,
+            "error": false,
+            "message": "",
+            "depth": 1,
+            "kind": "client",
+            "peer_service": "image-provider"
+          }
+        ],
+        "origin": "image-provider",
+        "slow": true
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend-proxy:summary",
+      "source": "traces",
+      "service": "frontend-proxy",
+      "title": "1/200 sampled frontend-proxy traces failed in the last 5m; top error origin: kafka",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 1,
+        "error_origins": {
+          "kafka": 1
+        },
+        "latency_contributors_ms": {
+          "image-provider": 5000.0
+        },
+        "p95_ms": 5210.0
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_latency_origin",
+      "service": "image-provider",
+      "score": 3.0,
+      "summary": "image-provider accounts for 100% of added latency in frontend-proxy traces (+5000ms)",
+      "evidence_ids": [
+        "traces:frontend-proxy:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 5000.0
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "accounting",
+      "score": 1.5,
+      "summary": "accounting rolled out 2.0.2 \u2192 2.0.3 11m before the alert",
+      "evidence_ids": [
+        "changes:accounting:deploy:0"
+      ],
+      "data": {
+        "minutes_before_alert": 10.6,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "frontend-proxy",
+      "score": 0.8,
+      "summary": "frontend-proxy p95 211ms \u2192 5015ms",
+      "evidence_ids": [
+        "metrics:frontend-proxy:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 210.8233,
+        "current": 5014.7842
+      }
+    },
+    {
+      "kind": "client_timeout",
+      "service": "image-provider",
+      "score": 0.8,
+      "summary": "calls to image-provider time out on the client side (5012.0ms)",
+      "evidence_ids": [
+        "traces:frontend-proxy:04fcadc37b3d"
+      ],
+      "data": {
+        "message": ""
+      }
+    },
+    {
+      "kind": "error_logs",
+      "service": "frontend-proxy",
+      "score": 0.6,
+      "summary": "42\u00d7 ERROR in frontend-proxy: grpc: received message larger than max (4194304 vs. 4194304)",
+      "evidence_ids": [
+        "logs:frontend-proxy:2"
+      ],
+      "data": {
+        "count": 42,
+        "message": "grpc: received message larger than max (4194304 vs. 4194304)"
+      }
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "RB-network",
+      "title": "Latency or timeouts between two services",
+      "type": "runbook",
+      "services": [
+        "*"
+      ],
+      "category": "network_latency",
+      "date": null,
+      "snippet": "If the caller's client span is slow but the callee's server span is fast (or missing), the time is spent on the network. 1. Check for Chaos Mesh experiments: `kubectl get networkchaos -A`. 2. Check the node: `kubectl get pods -o wide` - are the slow calls all to pods on one node? 3. Check Envoy fault injection (image-provider uses `imageSlowLoad`).",
+      "score": 19.942
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 17.187
+    },
+    {
+      "id": "PM-2026-06-17",
+      "title": "Accounting consumer lag from a long-running Postgres migration",
+      "type": "postmortem",
+      "services": [
+        "postgresql",
+        "accounting",
+        "product-catalog",
+        "kafka"
+      ],
+      "category": "datastore_degradation",
+      "date": "2026-06-17",
+      "snippet": "## Summary A manual `ALTER TABLE` on `orders` held a lock for 40 minutes. Accounting's inserts slowed from 30ms to ~1s, and its Kafka consumer lag grew past 5,000 messages. Product-catalog reads were also slower. The alert fired on consumer lag. ## Root cause Datastore degradation in postgresql (lock contention). Accounting was healthy but blocked on the database. ## Resolution Cancelled the migra\u2026",
+      "score": 12.344
+    },
+    {
+      "id": "PM-2026-04-22",
+      "title": "Ad service CPU saturation slowed every product page",
+      "type": "postmortem",
+      "services": [
+        "ad",
+        "frontend"
+      ],
+      "category": "cpu_saturation",
+      "date": "2026-04-22",
+      "snippet": "## Summary A regex in ad targeting went quadratic on long keyword lists. Ad CPU sat at 97% of its limit with heavy throttling, p95 rose to 1.5s and frontend page latency breached its SLO. A small share of ad calls hit DEADLINE_EXCEEDED. ## Resolution Scaled ad to 4 replicas, then fixed the regex. ## Lessons - CPU at limit + `CPUThrottlingHigh` + latency on one service with no errors elsewhere = sa\u2026",
+      "score": 11.874
+    },
+    {
+      "id": "PM-2026-05-04",
+      "title": "Recommendation OOM loop from an unbounded product cache",
+      "type": "postmortem",
+      "services": [
+        "recommendation",
+        "frontend"
+      ],
+      "category": "memory_leak",
+      "date": "2026-05-04",
+      "snippet": "## Summary Recommendation was OOMKilled every ~7 minutes for two hours. Each restart dropped in-flight requests, so frontend saw periodic bursts of 5xx. Memory grew linearly from ~45% to 100% of the limit between restarts (sawtooth). ## Root cause An in-process cache keyed by product-id list had no eviction. The `recommendationCacheFailure` flag reproduces this. ## Resolution Restarted the deploym\u2026",
+      "score": 10.747
+    }
+  ],
+  "services_examined": [
+    "frontend-proxy",
+    "image-provider"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "image-provider",
+    "expected_category": "network_latency",
+    "predicted_service": "image-provider",
+    "predicted_category": "network_latency",
+    "confidence": 0.85
+  },
+  "slack_posted": false
+}

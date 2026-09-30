@@ -1,0 +1,1597 @@
+{
+  "id": "492e0a66731b",
+  "alert": {
+    "name": "FraudDetectionConsumerLagHigh",
+    "service": "fraud-detection",
+    "severity": "warning",
+    "summary": "fraud-detection consumer lag > 1000 messages",
+    "labels": {
+      "scenario_id": "fraud-detection-slow-leak"
+    },
+    "starts_at": "2026-09-30T02:52:19.756996Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "fraud-detection-slow-leak",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:52:19.757077Z",
+  "completed_at": "2026-09-30T02:52:49.069926Z",
+  "duration_ms": 29311,
+  "hypothesis": {
+    "root_cause_service": "fraud-detection",
+    "category": "memory_leak",
+    "title": "fraud-detection memory leak causes GC pressure and consumer lag",
+    "summary": "fraud-detection is experiencing memory pressure with heap usage above 90% after full GC, causing severe GC pauses that slow message processing from 28ms to 521ms p95. The service has no external dependencies, so the slowdown is internal. As a result, it cannot keep up with the Kafka message rate, and consumer lag has grown from 12 to over 3,600 messages. The memory leak is the root cause; the lag and latency are symptoms.",
+    "reasoning": "The alert fired on fraud-detection consumer lag exceeding 1000 messages. The lag grew from ~12 to 3,667 messages starting around -20m, coinciding with a latency spike from 28ms to 521ms. The key question is: why is fraud-detection slow? Examining the evidence: (1) Traces show fraud-detection's own spans account for 100% of the added latency (+463ms), with a sample trace spending 467ms in fraud-detection/handle. (2) CPU utilization rose from 14% to 38%, and memory from 50% to 82%. (3) Critically, logs show 300 warnings of \"heap usage above 90% after full GC\" starting at -23m, just before the latency spike. This indicates memory pressure and GC thrashing. (4) The request rate is stable (~3.2 req/s), so this is not a load spike. (5) Fraud-detection has no downstream dependencies in the call graph\u2014it only consumes from Kafka and processes messages internally. The accounting and payment deploys at -12m and -24m are red herrings: accounting is a sibling consumer (not a dependency of fraud-detection), and payment is not on fraud-detection's path at all. The telemetry points to fraud-detection itself suffering from memory pressure causing GC pauses, which slows message processing and creates the lag. This matches a memory_leak pattern: gradual memory growth, high heap after full GC, increasing latency, and consumer lag as a symptom.",
+    "confidence": 0.85,
+    "supporting_evidence": [
+      {
+        "evidence_id": "logs:fraud-detection:1",
+        "why_it_matters": "300 warnings of heap usage above 90% after full GC starting at -23m directly indicate memory pressure and GC thrashing, the mechanism causing slowdowns."
+      },
+      {
+        "evidence_id": "metrics:fraud-detection:p95_latency_ms",
+        "why_it_matters": "Latency spiked from 28ms to 521ms starting at -20m, coinciding with memory pressure onset, showing the performance impact of GC pauses."
+      },
+      {
+        "evidence_id": "traces:fraud-detection:ae288a75895f",
+        "why_it_matters": "A 467ms trace with all time spent in fraud-detection/handle confirms the service itself is slow, not waiting on a dependency."
+      },
+      {
+        "evidence_id": "metrics:fraud-detection:consumer_lag",
+        "why_it_matters": "Lag grew from 12 to 3,667 messages as processing slowed, demonstrating the symptom of the underlying memory issue."
+      },
+      {
+        "evidence_id": "metrics:fraud-detection:memory_utilization",
+        "why_it_matters": "Memory climbed from 50% to 82% over 45 minutes, showing gradual growth consistent with a memory leak rather than a sudden spike."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Restart fraud-detection to clear leaked memory and restore processing speed",
+        "command": "kubectl -n otel-demo rollout restart deployment/fraud-detection",
+        "risk": "low",
+        "rationale": "Restarting will immediately clear the leaked memory, stop GC thrashing, and allow the consumer to drain the backlog. This is the safest and fastest mitigation."
+      },
+      {
+        "title": "Temporarily increase memory limit to buy time for investigation",
+        "command": "kubectl -n otel-demo set resources deployment/fraud-detection --limits=memory=2Gi",
+        "risk": "low",
+        "rationale": "If a restart alone does not resolve the issue or the leak recurs quickly, raising the memory limit will delay the next GC crisis while engineers investigate the leak's source."
+      },
+      {
+        "title": "Capture a heap dump before restart for root-cause analysis",
+        "command": "kubectl -n otel-demo exec deploy/fraud-detection -- jmap -dump:format=b,file=/tmp/heap.hprof 1",
+        "risk": "medium",
+        "rationale": "Preserving a heap dump will help identify which objects are leaking. Only do this if the service is still running and you have time before the restart."
+      }
+    ],
+    "related_documents": [
+      "RB-oom",
+      "RB-kafka-lag"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "accounting",
+        "category": "bad_deploy",
+        "why_less_likely": "The accounting 2.0.2\u21922.0.3 deploy at -12m is a red herring. Accounting is a sibling Kafka consumer, not a dependency of fraud-detection. Fraud-detection has no downstream calls, so accounting's health is irrelevant to fraud-detection's slowness."
+      },
+      {
+        "root_cause_service": "fraud-detection",
+        "category": "cpu_saturation",
+        "why_less_likely": "CPU rose from 14% to 38%, which is elevated but not saturated or throttled. The memory pressure logs and gradual memory growth point more clearly to GC thrashing as the mechanism, not CPU limits."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:accounting:deploy:0",
+      "source": "changes",
+      "service": "accounting",
+      "title": "deployment/accounting rolled out 2.0.2 \u2192 2.0.3 (12m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/accounting",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 12.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:payment:deploy:1",
+      "source": "changes",
+      "service": "payment",
+      "title": "deployment/payment rolled out 2.0.2 \u2192 2.0.3 (24m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/payment",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 24.1
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:fraud-detection:1",
+      "source": "logs",
+      "service": "fraud-detection",
+      "title": "300\u00d7 WARN heap usage above 90% after full GC",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "heap usage above 90% after full GC",
+        "level": "WARN",
+        "count": 300,
+        "sample": "heap usage above 90% after full GC",
+        "first_seen_min": -23.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:fraud-detection:consumer_lag",
+      "source": "metrics",
+      "service": "fraud-detection",
+      "title": "fraud-detection consumer lag: 12 \u2192 3,667",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "consumer_lag",
+        "unit": "messages",
+        "series": [
+          [
+            -45,
+            11.9714
+          ],
+          [
+            -44,
+            11.7203
+          ],
+          [
+            -43,
+            12.5779
+          ],
+          [
+            -42,
+            11.5312
+          ],
+          [
+            -41,
+            12.442
+          ],
+          [
+            -40,
+            12.6031
+          ],
+          [
+            -39,
+            10.7445
+          ],
+          [
+            -38,
+            11.7843
+          ],
+          [
+            -37,
+            12.0442
+          ],
+          [
+            -36,
+            11.7998
+          ],
+          [
+            -35,
+            11.4315
+          ],
+          [
+            -34,
+            11.8425
+          ],
+          [
+            -33,
+            12.6905
+          ],
+          [
+            -32,
+            12.0988
+          ],
+          [
+            -31,
+            12.0674
+          ],
+          [
+            -30,
+            12.5437
+          ],
+          [
+            -29,
+            11.6012
+          ],
+          [
+            -28,
+            11.5199
+          ],
+          [
+            -27,
+            11.1451
+          ],
+          [
+            -26,
+            11.1072
+          ],
+          [
+            -25,
+            12.1228
+          ],
+          [
+            -24,
+            86.4854
+          ],
+          [
+            -23,
+            208.2803
+          ],
+          [
+            -22,
+            326.2908
+          ],
+          [
+            -21,
+            470.4952
+          ],
+          [
+            -20,
+            599.0743
+          ],
+          [
+            -19,
+            743.5315
+          ],
+          [
+            -18,
+            938.1264
+          ],
+          [
+            -17,
+            1067.3774
+          ],
+          [
+            -16,
+            1246.628
+          ],
+          [
+            -15,
+            1430.7185
+          ],
+          [
+            -14,
+            1633.5629
+          ],
+          [
+            -13,
+            1788.9952
+          ],
+          [
+            -12,
+            1911.2877
+          ],
+          [
+            -11,
+            1969.5135
+          ],
+          [
+            -10,
+            2262.3579
+          ],
+          [
+            -9,
+            2424.9647
+          ],
+          [
+            -8,
+            2876.969
+          ],
+          [
+            -7,
+            2639.7618
+          ],
+          [
+            -6,
+            2859.519
+          ],
+          [
+            -5,
+            3279.3099
+          ],
+          [
+            -4,
+            3469.7443
+          ],
+          [
+            -3,
+            3681.1638
+          ],
+          [
+            -2,
+            3752.9583
+          ],
+          [
+            -1,
+            3693.503
+          ],
+          [
+            0,
+            4123.3949
+          ]
+        ],
+        "baseline": 11.7998,
+        "current": 3666.679,
+        "peak": 4123.3949
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:fraud-detection:cpu_utilization",
+      "source": "metrics",
+      "service": "fraud-detection",
+      "title": "fraud-detection cpu utilization: 14.2% \u2192 38.5% (peak 41.3%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.142
+          ],
+          [
+            -44,
+            0.1459
+          ],
+          [
+            -43,
+            0.1461
+          ],
+          [
+            -42,
+            0.1423
+          ],
+          [
+            -41,
+            0.1444
+          ],
+          [
+            -40,
+            0.1364
+          ],
+          [
+            -39,
+            0.1467
+          ],
+          [
+            -38,
+            0.1401
+          ],
+          [
+            -37,
+            0.1346
+          ],
+          [
+            -36,
+            0.1419
+          ],
+          [
+            -35,
+            0.1288
+          ],
+          [
+            -34,
+            0.128
+          ],
+          [
+            -33,
+            0.134
+          ],
+          [
+            -32,
+            0.144
+          ],
+          [
+            -31,
+            0.1446
+          ],
+          [
+            -30,
+            0.1443
+          ],
+          [
+            -29,
+            0.1299
+          ],
+          [
+            -28,
+            0.1393
+          ],
+          [
+            -27,
+            0.1485
+          ],
+          [
+            -26,
+            0.1361
+          ],
+          [
+            -25,
+            0.1521
+          ],
+          [
+            -24,
+            0.1488
+          ],
+          [
+            -23,
+            0.1507
+          ],
+          [
+            -22,
+            0.1756
+          ],
+          [
+            -21,
+            0.1801
+          ],
+          [
+            -20,
+            0.1982
+          ],
+          [
+            -19,
+            0.2078
+          ],
+          [
+            -18,
+            0.2167
+          ],
+          [
+            -17,
+            0.2152
+          ],
+          [
+            -16,
+            0.2324
+          ],
+          [
+            -15,
+            0.2478
+          ],
+          [
+            -14,
+            0.2662
+          ],
+          [
+            -13,
+            0.2724
+          ],
+          [
+            -12,
+            0.2856
+          ],
+          [
+            -11,
+            0.2751
+          ],
+          [
+            -10,
+            0.2906
+          ],
+          [
+            -9,
+            0.3098
+          ],
+          [
+            -8,
+            0.2929
+          ],
+          [
+            -7,
+            0.3057
+          ],
+          [
+            -6,
+            0.3576
+          ],
+          [
+            -5,
+            0.3284
+          ],
+          [
+            -4,
+            0.3808
+          ],
+          [
+            -3,
+            0.4135
+          ],
+          [
+            -2,
+            0.3772
+          ],
+          [
+            -1,
+            0.4064
+          ],
+          [
+            0,
+            0.4037
+          ]
+        ],
+        "baseline": 0.142,
+        "current": 0.385,
+        "peak": 0.4135
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:fraud-detection:error_rate",
+      "source": "metrics",
+      "service": "fraud-detection",
+      "title": "fraud-detection error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0044
+          ],
+          [
+            -44,
+            0.004
+          ],
+          [
+            -43,
+            0.0037
+          ],
+          [
+            -42,
+            0.0028
+          ],
+          [
+            -41,
+            0.004
+          ],
+          [
+            -40,
+            0.0038
+          ],
+          [
+            -39,
+            0.0053
+          ],
+          [
+            -38,
+            0.0037
+          ],
+          [
+            -37,
+            0.0045
+          ],
+          [
+            -36,
+            0.0045
+          ],
+          [
+            -35,
+            0.0044
+          ],
+          [
+            -34,
+            0.0047
+          ],
+          [
+            -33,
+            0.0041
+          ],
+          [
+            -32,
+            0.0037
+          ],
+          [
+            -31,
+            0.0041
+          ],
+          [
+            -30,
+            0.0038
+          ],
+          [
+            -29,
+            0.0044
+          ],
+          [
+            -28,
+            0.0044
+          ],
+          [
+            -27,
+            0.0037
+          ],
+          [
+            -26,
+            0.0051
+          ],
+          [
+            -25,
+            0.0039
+          ],
+          [
+            -24,
+            0.0038
+          ],
+          [
+            -23,
+            0.0038
+          ],
+          [
+            -22,
+            0.0051
+          ],
+          [
+            -21,
+            0.0045
+          ],
+          [
+            -20,
+            0.0042
+          ],
+          [
+            -19,
+            0.0046
+          ],
+          [
+            -18,
+            0.004
+          ],
+          [
+            -17,
+            0.0037
+          ],
+          [
+            -16,
+            0.0048
+          ],
+          [
+            -15,
+            0.0043
+          ],
+          [
+            -14,
+            0.0046
+          ],
+          [
+            -13,
+            0.0038
+          ],
+          [
+            -12,
+            0.0047
+          ],
+          [
+            -11,
+            0.0038
+          ],
+          [
+            -10,
+            0.0042
+          ],
+          [
+            -9,
+            0.0033
+          ],
+          [
+            -8,
+            0.0038
+          ],
+          [
+            -7,
+            0.004
+          ],
+          [
+            -6,
+            0.0036
+          ],
+          [
+            -5,
+            0.0047
+          ],
+          [
+            -4,
+            0.005
+          ],
+          [
+            -3,
+            0.004
+          ],
+          [
+            -2,
+            0.0043
+          ],
+          [
+            -1,
+            0.0035
+          ],
+          [
+            0,
+            0.0046
+          ]
+        ],
+        "baseline": 0.004,
+        "current": 0.0044,
+        "peak": 0.0053
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:fraud-detection:memory_utilization",
+      "source": "metrics",
+      "service": "fraud-detection",
+      "title": "fraud-detection memory utilization: 49.8% \u2192 82.3% (peak 85.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.496
+          ],
+          [
+            -44,
+            0.5083
+          ],
+          [
+            -43,
+            0.4975
+          ],
+          [
+            -42,
+            0.4959
+          ],
+          [
+            -41,
+            0.4902
+          ],
+          [
+            -40,
+            0.4888
+          ],
+          [
+            -39,
+            0.5018
+          ],
+          [
+            -38,
+            0.5025
+          ],
+          [
+            -37,
+            0.5051
+          ],
+          [
+            -36,
+            0.5007
+          ],
+          [
+            -35,
+            0.4977
+          ],
+          [
+            -34,
+            0.489
+          ],
+          [
+            -33,
+            0.5127
+          ],
+          [
+            -32,
+            0.4897
+          ],
+          [
+            -31,
+            0.4941
+          ],
+          [
+            -30,
+            0.503
+          ],
+          [
+            -29,
+            0.4762
+          ],
+          [
+            -28,
+            0.4864
+          ],
+          [
+            -27,
+            0.5046
+          ],
+          [
+            -26,
+            0.4956
+          ],
+          [
+            -25,
+            0.5095
+          ],
+          [
+            -24,
+            0.5134
+          ],
+          [
+            -23,
+            0.5325
+          ],
+          [
+            -22,
+            0.532
+          ],
+          [
+            -21,
+            0.5517
+          ],
+          [
+            -20,
+            0.559
+          ],
+          [
+            -19,
+            0.5886
+          ],
+          [
+            -18,
+            0.6128
+          ],
+          [
+            -17,
+            0.6119
+          ],
+          [
+            -16,
+            0.6172
+          ],
+          [
+            -15,
+            0.6357
+          ],
+          [
+            -14,
+            0.658
+          ],
+          [
+            -13,
+            0.6817
+          ],
+          [
+            -12,
+            0.687
+          ],
+          [
+            -11,
+            0.7196
+          ],
+          [
+            -10,
+            0.707
+          ],
+          [
+            -9,
+            0.7373
+          ],
+          [
+            -8,
+            0.7363
+          ],
+          [
+            -7,
+            0.773
+          ],
+          [
+            -6,
+            0.8073
+          ],
+          [
+            -5,
+            0.7683
+          ],
+          [
+            -4,
+            0.7978
+          ],
+          [
+            -3,
+            0.8264
+          ],
+          [
+            -2,
+            0.8473
+          ],
+          [
+            -1,
+            0.859
+          ],
+          [
+            0,
+            0.8391
+          ]
+        ],
+        "baseline": 0.4977,
+        "current": 0.823,
+        "peak": 0.859
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:fraud-detection:p95_latency_ms",
+      "source": "metrics",
+      "service": "fraud-detection",
+      "title": "fraud-detection p95 latency ms: 28ms \u2192 521ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            27.2794
+          ],
+          [
+            -44,
+            26.5586
+          ],
+          [
+            -43,
+            29.5419
+          ],
+          [
+            -42,
+            25.9868
+          ],
+          [
+            -41,
+            33.5288
+          ],
+          [
+            -40,
+            24.9058
+          ],
+          [
+            -39,
+            27.5467
+          ],
+          [
+            -38,
+            28.0513
+          ],
+          [
+            -37,
+            27.7317
+          ],
+          [
+            -36,
+            26.2333
+          ],
+          [
+            -35,
+            29.7243
+          ],
+          [
+            -34,
+            26.7985
+          ],
+          [
+            -33,
+            24.5831
+          ],
+          [
+            -32,
+            28.7914
+          ],
+          [
+            -31,
+            26.4263
+          ],
+          [
+            -30,
+            30.7935
+          ],
+          [
+            -29,
+            28.4274
+          ],
+          [
+            -28,
+            27.687
+          ],
+          [
+            -27,
+            29.9314
+          ],
+          [
+            -26,
+            28.0697
+          ],
+          [
+            -25,
+            27.1471
+          ],
+          [
+            -24,
+            45.9799
+          ],
+          [
+            -23,
+            63.8893
+          ],
+          [
+            -22,
+            84.4239
+          ],
+          [
+            -21,
+            110.9917
+          ],
+          [
+            -20,
+            132.0248
+          ],
+          [
+            -19,
+            153.1487
+          ],
+          [
+            -18,
+            173.1099
+          ],
+          [
+            -17,
+            212.9678
+          ],
+          [
+            -16,
+            224.2594
+          ],
+          [
+            -15,
+            200.4994
+          ],
+          [
+            -14,
+            247.044
+          ],
+          [
+            -13,
+            277.6426
+          ],
+          [
+            -12,
+            293.0823
+          ],
+          [
+            -11,
+            297.9495
+          ],
+          [
+            -10,
+            343.7861
+          ],
+          [
+            -9,
+            313.3798
+          ],
+          [
+            -8,
+            381.034
+          ],
+          [
+            -7,
+            434.7109
+          ],
+          [
+            -6,
+            405.9577
+          ],
+          [
+            -5,
+            460.9595
+          ],
+          [
+            -4,
+            469.6568
+          ],
+          [
+            -3,
+            497.4122
+          ],
+          [
+            -2,
+            574.578
+          ],
+          [
+            -1,
+            563.4845
+          ],
+          [
+            0,
+            558.2261
+          ]
+        ],
+        "baseline": 27.5467,
+        "current": 520.7195,
+        "peak": 574.578
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:fraud-detection:request_rate",
+      "source": "metrics",
+      "service": "fraud-detection",
+      "title": "fraud-detection request rate: 3.2 req/s \u2192 3.3 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            3.085
+          ],
+          [
+            -44,
+            3.1657
+          ],
+          [
+            -43,
+            3.2102
+          ],
+          [
+            -42,
+            3.2942
+          ],
+          [
+            -41,
+            3.2937
+          ],
+          [
+            -40,
+            3.0192
+          ],
+          [
+            -39,
+            3.1805
+          ],
+          [
+            -38,
+            3.1204
+          ],
+          [
+            -37,
+            3.1883
+          ],
+          [
+            -36,
+            3.0737
+          ],
+          [
+            -35,
+            2.9716
+          ],
+          [
+            -34,
+            3.2299
+          ],
+          [
+            -33,
+            3.0996
+          ],
+          [
+            -32,
+            2.971
+          ],
+          [
+            -31,
+            2.8839
+          ],
+          [
+            -30,
+            2.9258
+          ],
+          [
+            -29,
+            3.2043
+          ],
+          [
+            -28,
+            3.3207
+          ],
+          [
+            -27,
+            3.4005
+          ],
+          [
+            -26,
+            3.031
+          ],
+          [
+            -25,
+            3.3065
+          ],
+          [
+            -24,
+            2.913
+          ],
+          [
+            -23,
+            3.4801
+          ],
+          [
+            -22,
+            3.4044
+          ],
+          [
+            -21,
+            3.4153
+          ],
+          [
+            -20,
+            3.1723
+          ],
+          [
+            -19,
+            3.1655
+          ],
+          [
+            -18,
+            3.1351
+          ],
+          [
+            -17,
+            3.0715
+          ],
+          [
+            -16,
+            3.1393
+          ],
+          [
+            -15,
+            3.1872
+          ],
+          [
+            -14,
+            3.0905
+          ],
+          [
+            -13,
+            3.0238
+          ],
+          [
+            -12,
+            3.0066
+          ],
+          [
+            -11,
+            3.5235
+          ],
+          [
+            -10,
+            3.3962
+          ],
+          [
+            -9,
+            3.0762
+          ],
+          [
+            -8,
+            3.1864
+          ],
+          [
+            -7,
+            3.3329
+          ],
+          [
+            -6,
+            2.908
+          ],
+          [
+            -5,
+            3.3625
+          ],
+          [
+            -4,
+            3.3191
+          ],
+          [
+            -3,
+            2.947
+          ],
+          [
+            -2,
+            3.3282
+          ],
+          [
+            -1,
+            3.5452
+          ],
+          [
+            0,
+            3.2185
+          ]
+        ],
+        "baseline": 3.1657,
+        "current": 3.2868,
+        "peak": 3.5452
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:fraud-detection:ae288a75895f",
+      "source": "traces",
+      "service": "fraud-detection",
+      "title": "Slow trace ae288a75895f: 1 spans, 467ms in fraud-detection",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "ae288a75895f12238b3c6c8b4e2dcbe7",
+        "spans": [
+          {
+            "service": "fraud-detection",
+            "operation": "fraud-detection/handle",
+            "duration_ms": 466.6,
+            "error": false,
+            "message": "",
+            "depth": 0,
+            "kind": "server"
+          }
+        ],
+        "origin": "fraud-detection",
+        "slow": true
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:fraud-detection:summary",
+      "source": "traces",
+      "service": "fraud-detection",
+      "title": "1/200 sampled fraud-detection traces failed in the last 5m; top error origin: fraud-detection",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 1,
+        "error_origins": {
+          "fraud-detection": 1
+        },
+        "latency_contributors_ms": {
+          "fraud-detection": 463.2
+        },
+        "p95_ms": 491.2
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_latency_origin",
+      "service": "fraud-detection",
+      "score": 3.0,
+      "summary": "fraud-detection accounts for 100% of added latency in fraud-detection traces (+463ms)",
+      "evidence_ids": [
+        "traces:fraud-detection:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 463.2
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "accounting",
+      "score": 1.5,
+      "summary": "accounting rolled out 2.0.2 \u2192 2.0.3 12m before the alert",
+      "evidence_ids": [
+        "changes:accounting:deploy:0"
+      ],
+      "data": {
+        "minutes_before_alert": 12.0,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "fraud-detection",
+      "score": 0.8,
+      "summary": "fraud-detection p95 28ms \u2192 521ms",
+      "evidence_ids": [
+        "metrics:fraud-detection:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 27.5467,
+        "current": 520.7195
+      }
+    },
+    {
+      "kind": "consumer_lag",
+      "service": "fraud-detection",
+      "score": 0.8,
+      "summary": "fraud-detection consumer lag 12 \u2192 3,667",
+      "evidence_ids": [
+        "metrics:fraud-detection:consumer_lag"
+      ],
+      "data": {
+        "current": 3666.679
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "payment",
+      "score": 0.75,
+      "summary": "payment rolled out 2.0.2 \u2192 2.0.3 24m before the alert",
+      "evidence_ids": [
+        "changes:payment:deploy:1"
+      ],
+      "data": {
+        "minutes_before_alert": 24.1,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "memory_pressure",
+      "service": "fraud-detection",
+      "score": 0.6,
+      "summary": "fraud-detection: heap usage above 90% after full GC",
+      "evidence_ids": [
+        "logs:fraud-detection:1"
+      ],
+      "data": {}
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "RB-kafka-lag",
+      "title": "Kafka consumer lag growing",
+      "type": "runbook",
+      "services": [
+        "kafka",
+        "accounting",
+        "fraud-detection"
+      ],
+      "category": "queue_backlog",
+      "date": null,
+      "snippet": "1. Is the consumer running? CrashLoopBackOff on the consumer => fix that first. 2. Is the consumer slow because of a dependency (Postgres latency)? Fix the dependency. 3. Is the consumer itself slow per message (kafkaQueueProblems flag, CPU)? Scale consumers up to the partition count. `kubectl -n otel-demo exec deploy/kafka -- /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:90\u2026",
+      "score": 49.154
+    },
+    {
+      "id": "PM-2026-06-17",
+      "title": "Accounting consumer lag from a long-running Postgres migration",
+      "type": "postmortem",
+      "services": [
+        "postgresql",
+        "accounting",
+        "product-catalog",
+        "kafka"
+      ],
+      "category": "datastore_degradation",
+      "date": "2026-06-17",
+      "snippet": "## Summary A manual `ALTER TABLE` on `orders` held a lock for 40 minutes. Accounting's inserts slowed from 30ms to ~1s, and its Kafka consumer lag grew past 5,000 messages. Product-catalog reads were also slower. The alert fired on consumer lag. ## Root cause Datastore degradation in postgresql (lock contention). Accounting was healthy but blocked on the database. ## Resolution Cancelled the migra\u2026",
+      "score": 25.284
+    },
+    {
+      "id": "PM-2026-01-20",
+      "title": "Payment 1.7.3 release failed card charges with a TypeError",
+      "type": "postmortem",
+      "services": [
+        "payment",
+        "checkout"
+      ],
+      "category": "bad_deploy",
+      "date": "2026-01-20",
+      "snippet": "## Summary A payment release changed the shape of the `amount` object. 35% of charges failed with `TypeError: Cannot read properties of undefined (reading 'units')`. Checkout's error-rate alert fired 9 minutes after rollout. ## Root cause Bad deploy. The new code assumed `amount.units` was always set; older clients sent `amount.nanos` only. ## Resolution `kubectl rollout undo deployment/payment`. \u2026",
+      "score": 15.486
+    },
+    {
+      "id": "RB-oom",
+      "title": "Pods restarting with OOMKilled",
+      "type": "runbook",
+      "services": [
+        "*"
+      ],
+      "category": "memory_leak",
+      "date": null,
+      "snippet": "Signs: `lastState.terminated.reason=OOMKilled`, sawtooth memory, restarts increasing. 1. `kubectl -n otel-demo describe pod <pod>` and check Last State. 2. Is memory growth linear between restarts (leak) or a step after a deploy (new baseline)? 3. Mitigate: `kubectl -n otel-demo rollout restart deployment/<svc>` or raise the limit temporarily. 4. Capture a heap profile before the next OOM (pprof /\u2026",
+      "score": 10.206
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 9.136
+    }
+  ],
+  "services_examined": [
+    "fraud-detection"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "fraud-detection",
+    "expected_category": "memory_leak",
+    "predicted_service": "fraud-detection",
+    "predicted_category": "memory_leak",
+    "confidence": 0.85
+  },
+  "slack_posted": false
+}

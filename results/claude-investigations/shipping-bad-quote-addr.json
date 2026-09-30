@@ -1,0 +1,3609 @@
+{
+  "id": "7d0e3a3cef6c",
+  "alert": {
+    "name": "CheckoutHighErrorRate",
+    "service": "checkout",
+    "severity": "critical",
+    "summary": "checkout error rate > 5% for 5m",
+    "labels": {
+      "scenario_id": "shipping-bad-quote-addr"
+    },
+    "starts_at": "2026-09-30T02:51:52.445953Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "shipping-bad-quote-addr",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:51:52.446053Z",
+  "completed_at": "2026-09-30T02:52:19.754207Z",
+  "duration_ms": 27307,
+  "hypothesis": {
+    "root_cause_service": "shipping",
+    "category": "config_change",
+    "title": "Shipping QUOTE_ADDR config change to non-existent 'quote-svc' hostname causes DNS failures",
+    "summary": "8 minutes before the alert, shipping's QUOTE_ADDR was changed from 'http://quote:8080' to 'http://quote-svc:8080'. The new hostname 'quote-svc' does not resolve, causing shipping to fail all quote requests with DNS errors. This propagates upstream to checkout, which now fails 77.7% of requests. The quote service itself is healthy and reachable at its original name 'quote'.",
+    "reasoning": "The alert fired on checkout with a 77.7% error rate. Traces show 100% of failing checkout traces end in shipping, and 99% of failing shipping traces originate in shipping itself. Both checkout and shipping logs show DNS errors: \"failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error\". The key change is that 8 minutes before the alert, shipping's QUOTE_ADDR environment variable was changed from 'http://quote:8080' to 'http://quote-svc:8080'. The quote service itself is healthy: its error rate remains at 0.4%, latency is stable at 22ms, and CPU/memory are normal. The quote service is receiving requests at its normal rate (~9 req/s), indicating it is reachable by its original name. The shipping service cannot resolve 'quote-svc', which is the new hostname introduced by the config change. This matches postmortem PM-2026-07-09 exactly: \"Shipping failed after a quote address change... Shipping could not resolve `quote-svc` and 90% of checkouts failed at the shipping step with `dns error`.\" The accounting and email deploys are red herrings\u2014they are not on the failing call path (checkout \u2192 shipping \u2192 quote). The valkey-cart restart is unrelated (exit 137 suggests OOMKill, but cart metrics are not shown and cart is not in the error path).",
+    "confidence": 0.95,
+    "supporting_evidence": [
+      {
+        "evidence_id": "changes:shipping:config:0",
+        "why_it_matters": "QUOTE_ADDR changed from 'http://quote:8080' to 'http://quote-svc:8080' 8 minutes before the alert, introducing the non-resolvable hostname."
+      },
+      {
+        "evidence_id": "logs:shipping:1",
+        "why_it_matters": "3,888 DNS errors in shipping trying to reach 'http://quote-svc:8080/getquote', first seen 8 minutes ago, matching the config change timing."
+      },
+      {
+        "evidence_id": "traces:shipping:6ce4e7e6f18c",
+        "why_it_matters": "Failing shipping trace shows the deepest error is 'dns error' when trying to reach quote-svc, confirming the hostname is unresolvable."
+      },
+      {
+        "evidence_id": "metrics:quote:error_rate",
+        "why_it_matters": "Quote's error rate remains at 0.4% and request rate is stable at 9 req/s, proving quote itself is healthy and the problem is shipping's inability to reach it."
+      },
+      {
+        "evidence_id": "traces:checkout:summary",
+        "why_it_matters": "154 of 200 checkout traces fail, all originating in shipping, showing the error propagates upstream from shipping to checkout."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Revert shipping QUOTE_ADDR to the original working hostname",
+        "command": "kubectl -n otel-demo set env deployment/shipping QUOTE_ADDR=http://quote:8080",
+        "risk": "low",
+        "rationale": "The original hostname 'quote:8080' was working and quote service is healthy. This immediately restores connectivity."
+      },
+      {
+        "title": "Verify the correct service name for quote",
+        "command": "kubectl -n otel-demo get svc | grep quote",
+        "risk": "low",
+        "rationale": "Confirm whether the service is named 'quote' or 'quote-svc'. If 'quote-svc' exists, the DNS issue may be transient or a cluster problem."
+      },
+      {
+        "title": "Restart shipping pods to pick up the reverted config",
+        "command": "kubectl -n otel-demo rollout restart deployment/shipping",
+        "risk": "low",
+        "rationale": "If the env var revert doesn't auto-restart pods, force a restart to apply the corrected QUOTE_ADDR."
+      }
+    ],
+    "related_documents": [
+      "PM-2026-07-09",
+      "RB-unavailable"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "quote",
+        "category": "dependency_unavailable",
+        "why_less_likely": "Quote's own metrics show it is healthy: 0.4% error rate, stable 22ms p95 latency, normal CPU/memory, and receiving ~9 req/s. If quote were unavailable, its request rate would drop to zero and its own metrics would show distress."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:accounting:deploy:2",
+      "source": "changes",
+      "service": "accounting",
+      "title": "deployment/accounting rolled out 2.0.2 \u2192 2.0.3 (9m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/accounting",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 9.4
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:email:deploy:1",
+      "source": "changes",
+      "service": "email",
+      "title": "deployment/email rolled out 2.0.2 \u2192 2.0.3 (15m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/email",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 15.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:shipping:config:0",
+      "source": "changes",
+      "service": "shipping",
+      "title": "deployment/shipping: QUOTE_ADDR changed 'http://quote:8080' \u2192 'http://quote-svc:8080' (8m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "config_change",
+        "resource": "deployment/shipping",
+        "key": "QUOTE_ADDR",
+        "old": "http://quote:8080",
+        "new": "http://quote-svc:8080",
+        "minutes_before_alert": 8.5,
+        "affects": "shipping"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:valkey-cart:pod_status",
+      "source": "k8s_events",
+      "service": "valkey-cart",
+      "title": "pod/valkey-cart-d23c1bd8-eae42 restarts=1, last terminated: Error (exit code 137)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/valkey-cart-d23c1bd8-eae42",
+        "phase": "Running",
+        "restarts": 1,
+        "last_termination_reason": "Error (exit code 137)",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:checkout:1",
+      "source": "logs",
+      "service": "checkout",
+      "title": "1,175\u00d7 ERROR failed calling shipping: failed to get shipping quote: error sending request for url (http",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "failed calling shipping: failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error",
+        "level": "ERROR",
+        "count": 1175,
+        "sample": "failed calling shipping: failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error",
+        "first_seen_min": -8.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:shipping:1",
+      "source": "logs",
+      "service": "shipping",
+      "title": "3,888\u00d7 ERROR failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquot",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error",
+        "level": "ERROR",
+        "count": 3888,
+        "sample": "failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error (trace_id=\u2026)",
+        "first_seen_min": -8.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:cpu_utilization",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout cpu utilization: 18.4% \u2192 17.6% (peak 20.3%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2031
+          ],
+          [
+            -44,
+            0.1878
+          ],
+          [
+            -43,
+            0.1697
+          ],
+          [
+            -42,
+            0.1812
+          ],
+          [
+            -41,
+            0.1864
+          ],
+          [
+            -40,
+            0.1845
+          ],
+          [
+            -39,
+            0.1755
+          ],
+          [
+            -38,
+            0.1857
+          ],
+          [
+            -37,
+            0.1831
+          ],
+          [
+            -36,
+            0.1906
+          ],
+          [
+            -35,
+            0.171
+          ],
+          [
+            -34,
+            0.1874
+          ],
+          [
+            -33,
+            0.17
+          ],
+          [
+            -32,
+            0.1768
+          ],
+          [
+            -31,
+            0.1721
+          ],
+          [
+            -30,
+            0.1838
+          ],
+          [
+            -29,
+            0.1825
+          ],
+          [
+            -28,
+            0.1856
+          ],
+          [
+            -27,
+            0.1827
+          ],
+          [
+            -26,
+            0.1808
+          ],
+          [
+            -25,
+            0.184
+          ],
+          [
+            -24,
+            0.1919
+          ],
+          [
+            -23,
+            0.1812
+          ],
+          [
+            -22,
+            0.163
+          ],
+          [
+            -21,
+            0.1766
+          ],
+          [
+            -20,
+            0.1795
+          ],
+          [
+            -19,
+            0.1641
+          ],
+          [
+            -18,
+            0.1724
+          ],
+          [
+            -17,
+            0.1778
+          ],
+          [
+            -16,
+            0.1766
+          ],
+          [
+            -15,
+            0.1774
+          ],
+          [
+            -14,
+            0.1727
+          ],
+          [
+            -13,
+            0.1776
+          ],
+          [
+            -12,
+            0.1709
+          ],
+          [
+            -11,
+            0.1763
+          ],
+          [
+            -10,
+            0.1708
+          ],
+          [
+            -9,
+            0.1825
+          ],
+          [
+            -8,
+            0.1855
+          ],
+          [
+            -7,
+            0.1709
+          ],
+          [
+            -6,
+            0.1787
+          ],
+          [
+            -5,
+            0.1773
+          ],
+          [
+            -4,
+            0.1666
+          ],
+          [
+            -3,
+            0.1855
+          ],
+          [
+            -2,
+            0.1858
+          ],
+          [
+            -1,
+            0.1667
+          ],
+          [
+            0,
+            0.1725
+          ]
+        ],
+        "baseline": 0.1845,
+        "current": 0.1757,
+        "peak": 0.2031
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:error_rate",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout error rate: 0.4% \u2192 77.7%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0032
+          ],
+          [
+            -44,
+            0.0036
+          ],
+          [
+            -43,
+            0.0049
+          ],
+          [
+            -42,
+            0.0036
+          ],
+          [
+            -41,
+            0.004
+          ],
+          [
+            -40,
+            0.0043
+          ],
+          [
+            -39,
+            0.0039
+          ],
+          [
+            -38,
+            0.0048
+          ],
+          [
+            -37,
+            0.0046
+          ],
+          [
+            -36,
+            0.0044
+          ],
+          [
+            -35,
+            0.004
+          ],
+          [
+            -34,
+            0.0028
+          ],
+          [
+            -33,
+            0.004
+          ],
+          [
+            -32,
+            0.0041
+          ],
+          [
+            -31,
+            0.0043
+          ],
+          [
+            -30,
+            0.0032
+          ],
+          [
+            -29,
+            0.0044
+          ],
+          [
+            -28,
+            0.0034
+          ],
+          [
+            -27,
+            0.0034
+          ],
+          [
+            -26,
+            0.0049
+          ],
+          [
+            -25,
+            0.0038
+          ],
+          [
+            -24,
+            0.004
+          ],
+          [
+            -23,
+            0.004
+          ],
+          [
+            -22,
+            0.0046
+          ],
+          [
+            -21,
+            0.005
+          ],
+          [
+            -20,
+            0.0041
+          ],
+          [
+            -19,
+            0.0035
+          ],
+          [
+            -18,
+            0.0036
+          ],
+          [
+            -17,
+            0.0046
+          ],
+          [
+            -16,
+            0.0051
+          ],
+          [
+            -15,
+            0.0039
+          ],
+          [
+            -14,
+            0.0035
+          ],
+          [
+            -13,
+            0.0039
+          ],
+          [
+            -12,
+            0.0046
+          ],
+          [
+            -11,
+            0.0033
+          ],
+          [
+            -10,
+            0.004
+          ],
+          [
+            -9,
+            0.0031
+          ],
+          [
+            -8,
+            0.0048
+          ],
+          [
+            -7,
+            0.3497
+          ],
+          [
+            -6,
+            0.8305
+          ],
+          [
+            -5,
+            0.7169
+          ],
+          [
+            -4,
+            0.7004
+          ],
+          [
+            -3,
+            0.8875
+          ],
+          [
+            -2,
+            0.7322
+          ],
+          [
+            -1,
+            0.8373
+          ],
+          [
+            0,
+            0.7897
+          ]
+        ],
+        "baseline": 0.004,
+        "current": 0.7773,
+        "peak": 0.8875
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:memory_utilization",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout memory utilization: 40.9% \u2192 40.9% (peak 42.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3999
+          ],
+          [
+            -44,
+            0.4127
+          ],
+          [
+            -43,
+            0.4143
+          ],
+          [
+            -42,
+            0.4089
+          ],
+          [
+            -41,
+            0.4078
+          ],
+          [
+            -40,
+            0.4173
+          ],
+          [
+            -39,
+            0.4058
+          ],
+          [
+            -38,
+            0.415
+          ],
+          [
+            -37,
+            0.4031
+          ],
+          [
+            -36,
+            0.4213
+          ],
+          [
+            -35,
+            0.3997
+          ],
+          [
+            -34,
+            0.4091
+          ],
+          [
+            -33,
+            0.4121
+          ],
+          [
+            -32,
+            0.4098
+          ],
+          [
+            -31,
+            0.4015
+          ],
+          [
+            -30,
+            0.4116
+          ],
+          [
+            -29,
+            0.4081
+          ],
+          [
+            -28,
+            0.4174
+          ],
+          [
+            -27,
+            0.3997
+          ],
+          [
+            -26,
+            0.4186
+          ],
+          [
+            -25,
+            0.4223
+          ],
+          [
+            -24,
+            0.4017
+          ],
+          [
+            -23,
+            0.4143
+          ],
+          [
+            -22,
+            0.4077
+          ],
+          [
+            -21,
+            0.429
+          ],
+          [
+            -20,
+            0.4192
+          ],
+          [
+            -19,
+            0.4108
+          ],
+          [
+            -18,
+            0.4129
+          ],
+          [
+            -17,
+            0.4041
+          ],
+          [
+            -16,
+            0.4013
+          ],
+          [
+            -15,
+            0.4111
+          ],
+          [
+            -14,
+            0.3948
+          ],
+          [
+            -13,
+            0.4165
+          ],
+          [
+            -12,
+            0.4139
+          ],
+          [
+            -11,
+            0.424
+          ],
+          [
+            -10,
+            0.4167
+          ],
+          [
+            -9,
+            0.4142
+          ],
+          [
+            -8,
+            0.4139
+          ],
+          [
+            -7,
+            0.4085
+          ],
+          [
+            -6,
+            0.4143
+          ],
+          [
+            -5,
+            0.4111
+          ],
+          [
+            -4,
+            0.414
+          ],
+          [
+            -3,
+            0.4036
+          ],
+          [
+            -2,
+            0.4087
+          ],
+          [
+            -1,
+            0.4043
+          ],
+          [
+            0,
+            0.4135
+          ]
+        ],
+        "baseline": 0.4089,
+        "current": 0.4092,
+        "peak": 0.429
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:p95_latency_ms",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout p95 latency ms: 313ms \u2192 316ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            330.0881
+          ],
+          [
+            -44,
+            312.9124
+          ],
+          [
+            -43,
+            302.6803
+          ],
+          [
+            -42,
+            311.5686
+          ],
+          [
+            -41,
+            334.0803
+          ],
+          [
+            -40,
+            339.258
+          ],
+          [
+            -39,
+            350.1277
+          ],
+          [
+            -38,
+            309.9347
+          ],
+          [
+            -37,
+            308.398
+          ],
+          [
+            -36,
+            294.8222
+          ],
+          [
+            -35,
+            320.91
+          ],
+          [
+            -34,
+            320.3073
+          ],
+          [
+            -33,
+            316.8878
+          ],
+          [
+            -32,
+            325.061
+          ],
+          [
+            -31,
+            313.8735
+          ],
+          [
+            -30,
+            314.5138
+          ],
+          [
+            -29,
+            351.0152
+          ],
+          [
+            -28,
+            302.4564
+          ],
+          [
+            -27,
+            350.9829
+          ],
+          [
+            -26,
+            332.8884
+          ],
+          [
+            -25,
+            325.85
+          ],
+          [
+            -24,
+            338.1566
+          ],
+          [
+            -23,
+            340.123
+          ],
+          [
+            -22,
+            285.2033
+          ],
+          [
+            -21,
+            329.4404
+          ],
+          [
+            -20,
+            263.1173
+          ],
+          [
+            -19,
+            315.7105
+          ],
+          [
+            -18,
+            341.909
+          ],
+          [
+            -17,
+            312.1683
+          ],
+          [
+            -16,
+            308.8704
+          ],
+          [
+            -15,
+            307.4782
+          ],
+          [
+            -14,
+            305.6325
+          ],
+          [
+            -13,
+            338.0979
+          ],
+          [
+            -12,
+            321.0602
+          ],
+          [
+            -11,
+            308.9994
+          ],
+          [
+            -10,
+            334.8108
+          ],
+          [
+            -9,
+            323.583
+          ],
+          [
+            -8,
+            312.6058
+          ],
+          [
+            -7,
+            333.9897
+          ],
+          [
+            -6,
+            337.6176
+          ],
+          [
+            -5,
+            311.2531
+          ],
+          [
+            -4,
+            295.1117
+          ],
+          [
+            -3,
+            325.6399
+          ],
+          [
+            -2,
+            331.1298
+          ],
+          [
+            -1,
+            281.9141
+          ],
+          [
+            0,
+            351.7036
+          ]
+        ],
+        "baseline": 312.9124,
+        "current": 316.1254,
+        "peak": 351.7036
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:request_rate",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout request rate: 3.2 req/s \u2192 3.2 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            3.1504
+          ],
+          [
+            -44,
+            3.1732
+          ],
+          [
+            -43,
+            3.349
+          ],
+          [
+            -42,
+            3.0728
+          ],
+          [
+            -41,
+            3.0368
+          ],
+          [
+            -40,
+            3.1276
+          ],
+          [
+            -39,
+            3.0933
+          ],
+          [
+            -38,
+            3.0943
+          ],
+          [
+            -37,
+            3.187
+          ],
+          [
+            -36,
+            3.1754
+          ],
+          [
+            -35,
+            3.2739
+          ],
+          [
+            -34,
+            3.1042
+          ],
+          [
+            -33,
+            3.4094
+          ],
+          [
+            -32,
+            3.0012
+          ],
+          [
+            -31,
+            3.1488
+          ],
+          [
+            -30,
+            2.9588
+          ],
+          [
+            -29,
+            3.0346
+          ],
+          [
+            -28,
+            2.9723
+          ],
+          [
+            -27,
+            3.3188
+          ],
+          [
+            -26,
+            3.3203
+          ],
+          [
+            -25,
+            3.4422
+          ],
+          [
+            -24,
+            3.3138
+          ],
+          [
+            -23,
+            3.0941
+          ],
+          [
+            -22,
+            2.9786
+          ],
+          [
+            -21,
+            3.5172
+          ],
+          [
+            -20,
+            3.1911
+          ],
+          [
+            -19,
+            3.3731
+          ],
+          [
+            -18,
+            3.1082
+          ],
+          [
+            -17,
+            2.9999
+          ],
+          [
+            -16,
+            2.9808
+          ],
+          [
+            -15,
+            3.3007
+          ],
+          [
+            -14,
+            3.148
+          ],
+          [
+            -13,
+            3.1215
+          ],
+          [
+            -12,
+            3.1339
+          ],
+          [
+            -11,
+            3.2315
+          ],
+          [
+            -10,
+            3.4581
+          ],
+          [
+            -9,
+            3.3016
+          ],
+          [
+            -8,
+            3.0581
+          ],
+          [
+            -7,
+            3.0444
+          ],
+          [
+            -6,
+            2.8616
+          ],
+          [
+            -5,
+            3.3355
+          ],
+          [
+            -4,
+            3.1612
+          ],
+          [
+            -3,
+            3.1416
+          ],
+          [
+            -2,
+            3.2813
+          ],
+          [
+            -1,
+            3.3303
+          ],
+          [
+            0,
+            3.073
+          ]
+        ],
+        "baseline": 3.1504,
+        "current": 3.2205,
+        "peak": 3.5172
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:quote:cpu_utilization",
+      "source": "metrics",
+      "service": "quote",
+      "title": "quote cpu utilization: 7.9% \u2192 7.8% (peak 8.8%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0779
+          ],
+          [
+            -44,
+            0.0778
+          ],
+          [
+            -43,
+            0.0791
+          ],
+          [
+            -42,
+            0.0785
+          ],
+          [
+            -41,
+            0.083
+          ],
+          [
+            -40,
+            0.0815
+          ],
+          [
+            -39,
+            0.0879
+          ],
+          [
+            -38,
+            0.0867
+          ],
+          [
+            -37,
+            0.0793
+          ],
+          [
+            -36,
+            0.0777
+          ],
+          [
+            -35,
+            0.0717
+          ],
+          [
+            -34,
+            0.0778
+          ],
+          [
+            -33,
+            0.0763
+          ],
+          [
+            -32,
+            0.0827
+          ],
+          [
+            -31,
+            0.0802
+          ],
+          [
+            -30,
+            0.0785
+          ],
+          [
+            -29,
+            0.076
+          ],
+          [
+            -28,
+            0.0879
+          ],
+          [
+            -27,
+            0.0811
+          ],
+          [
+            -26,
+            0.0804
+          ],
+          [
+            -25,
+            0.0829
+          ],
+          [
+            -24,
+            0.0807
+          ],
+          [
+            -23,
+            0.0848
+          ],
+          [
+            -22,
+            0.0844
+          ],
+          [
+            -21,
+            0.0828
+          ],
+          [
+            -20,
+            0.0748
+          ],
+          [
+            -19,
+            0.0762
+          ],
+          [
+            -18,
+            0.0769
+          ],
+          [
+            -17,
+            0.0755
+          ],
+          [
+            -16,
+            0.0809
+          ],
+          [
+            -15,
+            0.082
+          ],
+          [
+            -14,
+            0.0804
+          ],
+          [
+            -13,
+            0.0783
+          ],
+          [
+            -12,
+            0.0776
+          ],
+          [
+            -11,
+            0.0766
+          ],
+          [
+            -10,
+            0.081
+          ],
+          [
+            -9,
+            0.0725
+          ],
+          [
+            -8,
+            0.0782
+          ],
+          [
+            -7,
+            0.0818
+          ],
+          [
+            -6,
+            0.0756
+          ],
+          [
+            -5,
+            0.0824
+          ],
+          [
+            -4,
+            0.0724
+          ],
+          [
+            -3,
+            0.0828
+          ],
+          [
+            -2,
+            0.0754
+          ],
+          [
+            -1,
+            0.0778
+          ],
+          [
+            0,
+            0.0773
+          ]
+        ],
+        "baseline": 0.0791,
+        "current": 0.078,
+        "peak": 0.0879
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:quote:error_rate",
+      "source": "metrics",
+      "service": "quote",
+      "title": "quote error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0039
+          ],
+          [
+            -44,
+            0.0044
+          ],
+          [
+            -43,
+            0.0037
+          ],
+          [
+            -42,
+            0.0037
+          ],
+          [
+            -41,
+            0.0046
+          ],
+          [
+            -40,
+            0.0041
+          ],
+          [
+            -39,
+            0.0044
+          ],
+          [
+            -38,
+            0.0039
+          ],
+          [
+            -37,
+            0.0035
+          ],
+          [
+            -36,
+            0.0035
+          ],
+          [
+            -35,
+            0.0037
+          ],
+          [
+            -34,
+            0.0035
+          ],
+          [
+            -33,
+            0.0041
+          ],
+          [
+            -32,
+            0.0041
+          ],
+          [
+            -31,
+            0.0039
+          ],
+          [
+            -30,
+            0.0045
+          ],
+          [
+            -29,
+            0.0038
+          ],
+          [
+            -28,
+            0.0051
+          ],
+          [
+            -27,
+            0.004
+          ],
+          [
+            -26,
+            0.0041
+          ],
+          [
+            -25,
+            0.0049
+          ],
+          [
+            -24,
+            0.0038
+          ],
+          [
+            -23,
+            0.0027
+          ],
+          [
+            -22,
+            0.0043
+          ],
+          [
+            -21,
+            0.0041
+          ],
+          [
+            -20,
+            0.0043
+          ],
+          [
+            -19,
+            0.0041
+          ],
+          [
+            -18,
+            0.0038
+          ],
+          [
+            -17,
+            0.0044
+          ],
+          [
+            -16,
+            0.005
+          ],
+          [
+            -15,
+            0.0034
+          ],
+          [
+            -14,
+            0.0031
+          ],
+          [
+            -13,
+            0.0038
+          ],
+          [
+            -12,
+            0.0029
+          ],
+          [
+            -11,
+            0.0045
+          ],
+          [
+            -10,
+            0.0032
+          ],
+          [
+            -9,
+            0.0046
+          ],
+          [
+            -8,
+            0.0045
+          ],
+          [
+            -7,
+            0.0038
+          ],
+          [
+            -6,
+            0.0049
+          ],
+          [
+            -5,
+            0.0042
+          ],
+          [
+            -4,
+            0.0034
+          ],
+          [
+            -3,
+            0.0052
+          ],
+          [
+            -2,
+            0.0041
+          ],
+          [
+            -1,
+            0.003
+          ],
+          [
+            0,
+            0.0032
+          ]
+        ],
+        "baseline": 0.0039,
+        "current": 0.0038,
+        "peak": 0.0052
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:quote:memory_utilization",
+      "source": "metrics",
+      "service": "quote",
+      "title": "quote memory utilization: 25.2% \u2192 25.1% (peak 26.1%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2519
+          ],
+          [
+            -44,
+            0.2443
+          ],
+          [
+            -43,
+            0.254
+          ],
+          [
+            -42,
+            0.2547
+          ],
+          [
+            -41,
+            0.2567
+          ],
+          [
+            -40,
+            0.2547
+          ],
+          [
+            -39,
+            0.2477
+          ],
+          [
+            -38,
+            0.2528
+          ],
+          [
+            -37,
+            0.2524
+          ],
+          [
+            -36,
+            0.2493
+          ],
+          [
+            -35,
+            0.2463
+          ],
+          [
+            -34,
+            0.2578
+          ],
+          [
+            -33,
+            0.2555
+          ],
+          [
+            -32,
+            0.2479
+          ],
+          [
+            -31,
+            0.2523
+          ],
+          [
+            -30,
+            0.2571
+          ],
+          [
+            -29,
+            0.2543
+          ],
+          [
+            -28,
+            0.2517
+          ],
+          [
+            -27,
+            0.2496
+          ],
+          [
+            -26,
+            0.2535
+          ],
+          [
+            -25,
+            0.2573
+          ],
+          [
+            -24,
+            0.2438
+          ],
+          [
+            -23,
+            0.2537
+          ],
+          [
+            -22,
+            0.253
+          ],
+          [
+            -21,
+            0.251
+          ],
+          [
+            -20,
+            0.2438
+          ],
+          [
+            -19,
+            0.2478
+          ],
+          [
+            -18,
+            0.2506
+          ],
+          [
+            -17,
+            0.2609
+          ],
+          [
+            -16,
+            0.251
+          ],
+          [
+            -15,
+            0.2526
+          ],
+          [
+            -14,
+            0.2487
+          ],
+          [
+            -13,
+            0.2538
+          ],
+          [
+            -12,
+            0.2479
+          ],
+          [
+            -11,
+            0.2514
+          ],
+          [
+            -10,
+            0.2427
+          ],
+          [
+            -9,
+            0.2412
+          ],
+          [
+            -8,
+            0.2532
+          ],
+          [
+            -7,
+            0.2428
+          ],
+          [
+            -6,
+            0.2473
+          ],
+          [
+            -5,
+            0.2466
+          ],
+          [
+            -4,
+            0.2522
+          ],
+          [
+            -3,
+            0.253
+          ],
+          [
+            -2,
+            0.2535
+          ],
+          [
+            -1,
+            0.246
+          ],
+          [
+            0,
+            0.2532
+          ]
+        ],
+        "baseline": 0.2524,
+        "current": 0.2507,
+        "peak": 0.2609
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:quote:p95_latency_ms",
+      "source": "metrics",
+      "service": "quote",
+      "title": "quote p95 latency ms: 22ms \u2192 22ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            24.7281
+          ],
+          [
+            -44,
+            23.6717
+          ],
+          [
+            -43,
+            21.8507
+          ],
+          [
+            -42,
+            21.9739
+          ],
+          [
+            -41,
+            21.7754
+          ],
+          [
+            -40,
+            23.0353
+          ],
+          [
+            -39,
+            21.7648
+          ],
+          [
+            -38,
+            22.5396
+          ],
+          [
+            -37,
+            20.4362
+          ],
+          [
+            -36,
+            21.489
+          ],
+          [
+            -35,
+            22.2433
+          ],
+          [
+            -34,
+            23.0308
+          ],
+          [
+            -33,
+            24.0122
+          ],
+          [
+            -32,
+            25.3573
+          ],
+          [
+            -31,
+            21.8316
+          ],
+          [
+            -30,
+            23.0881
+          ],
+          [
+            -29,
+            19.9203
+          ],
+          [
+            -28,
+            24.1893
+          ],
+          [
+            -27,
+            22.556
+          ],
+          [
+            -26,
+            20.3907
+          ],
+          [
+            -25,
+            19.6435
+          ],
+          [
+            -24,
+            20.6637
+          ],
+          [
+            -23,
+            21.1632
+          ],
+          [
+            -22,
+            23.5114
+          ],
+          [
+            -21,
+            21.9383
+          ],
+          [
+            -20,
+            22.3474
+          ],
+          [
+            -19,
+            20.4451
+          ],
+          [
+            -18,
+            22.2959
+          ],
+          [
+            -17,
+            23.9591
+          ],
+          [
+            -16,
+            20.3384
+          ],
+          [
+            -15,
+            18.8508
+          ],
+          [
+            -14,
+            19.2559
+          ],
+          [
+            -13,
+            23.2706
+          ],
+          [
+            -12,
+            21.4238
+          ],
+          [
+            -11,
+            20.1883
+          ],
+          [
+            -10,
+            21.6234
+          ],
+          [
+            -9,
+            22.3476
+          ],
+          [
+            -8,
+            21.6654
+          ],
+          [
+            -7,
+            20.3844
+          ],
+          [
+            -6,
+            22.2842
+          ],
+          [
+            -5,
+            19.9059
+          ],
+          [
+            -4,
+            21.3361
+          ],
+          [
+            -3,
+            25.0844
+          ],
+          [
+            -2,
+            23.0957
+          ],
+          [
+            -1,
+            20.7074
+          ],
+          [
+            0,
+            22.4325
+          ]
+        ],
+        "baseline": 21.9739,
+        "current": 22.0937,
+        "peak": 25.3573
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:quote:request_rate",
+      "source": "metrics",
+      "service": "quote",
+      "title": "quote request rate: 9.0 req/s \u2192 9.0 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            8.9731
+          ],
+          [
+            -44,
+            8.6563
+          ],
+          [
+            -43,
+            8.317
+          ],
+          [
+            -42,
+            9.2285
+          ],
+          [
+            -41,
+            9.0042
+          ],
+          [
+            -40,
+            8.6988
+          ],
+          [
+            -39,
+            8.6968
+          ],
+          [
+            -38,
+            9.1298
+          ],
+          [
+            -37,
+            9.2958
+          ],
+          [
+            -36,
+            9.3119
+          ],
+          [
+            -35,
+            9.2781
+          ],
+          [
+            -34,
+            9.108
+          ],
+          [
+            -33,
+            8.8198
+          ],
+          [
+            -32,
+            9.3339
+          ],
+          [
+            -31,
+            8.4303
+          ],
+          [
+            -30,
+            8.3501
+          ],
+          [
+            -29,
+            8.3952
+          ],
+          [
+            -28,
+            8.913
+          ],
+          [
+            -27,
+            9.3882
+          ],
+          [
+            -26,
+            9.2656
+          ],
+          [
+            -25,
+            8.9017
+          ],
+          [
+            -24,
+            8.6975
+          ],
+          [
+            -23,
+            8.8733
+          ],
+          [
+            -22,
+            8.5877
+          ],
+          [
+            -21,
+            8.7614
+          ],
+          [
+            -20,
+            9.9309
+          ],
+          [
+            -19,
+            8.9419
+          ],
+          [
+            -18,
+            8.9199
+          ],
+          [
+            -17,
+            8.0679
+          ],
+          [
+            -16,
+            8.3157
+          ],
+          [
+            -15,
+            9.5718
+          ],
+          [
+            -14,
+            9.5864
+          ],
+          [
+            -13,
+            9.0653
+          ],
+          [
+            -12,
+            9.6878
+          ],
+          [
+            -11,
+            9.6697
+          ],
+          [
+            -10,
+            8.4917
+          ],
+          [
+            -9,
+            8.6843
+          ],
+          [
+            -8,
+            9.3479
+          ],
+          [
+            -7,
+            9.7912
+          ],
+          [
+            -6,
+            8.743
+          ],
+          [
+            -5,
+            9.0661
+          ],
+          [
+            -4,
+            9.0022
+          ],
+          [
+            -3,
+            9.03
+          ],
+          [
+            -2,
+            9.272
+          ],
+          [
+            -1,
+            8.8542
+          ],
+          [
+            0,
+            8.4941
+          ]
+        ],
+        "baseline": 9.0042,
+        "current": 8.9531,
+        "peak": 9.9309
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:shipping:cpu_utilization",
+      "source": "metrics",
+      "service": "shipping",
+      "title": "shipping cpu utilization: 10.0% \u2192 9.9% (peak 10.8%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1044
+          ],
+          [
+            -44,
+            0.0997
+          ],
+          [
+            -43,
+            0.1049
+          ],
+          [
+            -42,
+            0.0989
+          ],
+          [
+            -41,
+            0.0981
+          ],
+          [
+            -40,
+            0.098
+          ],
+          [
+            -39,
+            0.1061
+          ],
+          [
+            -38,
+            0.1008
+          ],
+          [
+            -37,
+            0.0927
+          ],
+          [
+            -36,
+            0.1033
+          ],
+          [
+            -35,
+            0.0988
+          ],
+          [
+            -34,
+            0.0936
+          ],
+          [
+            -33,
+            0.1065
+          ],
+          [
+            -32,
+            0.1038
+          ],
+          [
+            -31,
+            0.0974
+          ],
+          [
+            -30,
+            0.098
+          ],
+          [
+            -29,
+            0.0944
+          ],
+          [
+            -28,
+            0.106
+          ],
+          [
+            -27,
+            0.0986
+          ],
+          [
+            -26,
+            0.1001
+          ],
+          [
+            -25,
+            0.0999
+          ],
+          [
+            -24,
+            0.0944
+          ],
+          [
+            -23,
+            0.0982
+          ],
+          [
+            -22,
+            0.0971
+          ],
+          [
+            -21,
+            0.097
+          ],
+          [
+            -20,
+            0.1055
+          ],
+          [
+            -19,
+            0.0971
+          ],
+          [
+            -18,
+            0.1055
+          ],
+          [
+            -17,
+            0.1012
+          ],
+          [
+            -16,
+            0.108
+          ],
+          [
+            -15,
+            0.1027
+          ],
+          [
+            -14,
+            0.0997
+          ],
+          [
+            -13,
+            0.1011
+          ],
+          [
+            -12,
+            0.1043
+          ],
+          [
+            -11,
+            0.1019
+          ],
+          [
+            -10,
+            0.0904
+          ],
+          [
+            -9,
+            0.1
+          ],
+          [
+            -8,
+            0.1045
+          ],
+          [
+            -7,
+            0.1003
+          ],
+          [
+            -6,
+            0.0974
+          ],
+          [
+            -5,
+            0.0944
+          ],
+          [
+            -4,
+            0.1012
+          ],
+          [
+            -3,
+            0.0911
+          ],
+          [
+            -2,
+            0.1047
+          ],
+          [
+            -1,
+            0.0995
+          ],
+          [
+            0,
+            0.1015
+          ]
+        ],
+        "baseline": 0.0997,
+        "current": 0.0987,
+        "peak": 0.108
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:shipping:error_rate",
+      "source": "metrics",
+      "service": "shipping",
+      "title": "shipping error rate: 0.4% \u2192 100.2%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0037
+          ],
+          [
+            -44,
+            0.0033
+          ],
+          [
+            -43,
+            0.0029
+          ],
+          [
+            -42,
+            0.003
+          ],
+          [
+            -41,
+            0.0051
+          ],
+          [
+            -40,
+            0.0052
+          ],
+          [
+            -39,
+            0.004
+          ],
+          [
+            -38,
+            0.0052
+          ],
+          [
+            -37,
+            0.0042
+          ],
+          [
+            -36,
+            0.0041
+          ],
+          [
+            -35,
+            0.0032
+          ],
+          [
+            -34,
+            0.0033
+          ],
+          [
+            -33,
+            0.0043
+          ],
+          [
+            -32,
+            0.0044
+          ],
+          [
+            -31,
+            0.0035
+          ],
+          [
+            -30,
+            0.0039
+          ],
+          [
+            -29,
+            0.004
+          ],
+          [
+            -28,
+            0.0042
+          ],
+          [
+            -27,
+            0.0045
+          ],
+          [
+            -26,
+            0.0053
+          ],
+          [
+            -25,
+            0.0028
+          ],
+          [
+            -24,
+            0.004
+          ],
+          [
+            -23,
+            0.004
+          ],
+          [
+            -22,
+            0.0044
+          ],
+          [
+            -21,
+            0.0038
+          ],
+          [
+            -20,
+            0.0048
+          ],
+          [
+            -19,
+            0.0044
+          ],
+          [
+            -18,
+            0.0035
+          ],
+          [
+            -17,
+            0.0044
+          ],
+          [
+            -16,
+            0.0035
+          ],
+          [
+            -15,
+            0.0042
+          ],
+          [
+            -14,
+            0.0039
+          ],
+          [
+            -13,
+            0.0051
+          ],
+          [
+            -12,
+            0.0042
+          ],
+          [
+            -11,
+            0.0046
+          ],
+          [
+            -10,
+            0.0046
+          ],
+          [
+            -9,
+            0.0039
+          ],
+          [
+            -8,
+            0.0038
+          ],
+          [
+            -7,
+            0.5628
+          ],
+          [
+            -6,
+            0.7635
+          ],
+          [
+            -5,
+            0.9946
+          ],
+          [
+            -4,
+            0.9985
+          ],
+          [
+            -3,
+            0.8886
+          ],
+          [
+            -2,
+            1.1126
+          ],
+          [
+            -1,
+            1.0152
+          ],
+          [
+            0,
+            1.0043
+          ]
+        ],
+        "baseline": 0.004,
+        "current": 1.0023,
+        "peak": 1.1126
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:shipping:memory_utilization",
+      "source": "metrics",
+      "service": "shipping",
+      "title": "shipping memory utilization: 28.2% \u2192 27.9% (peak 29.1%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2828
+          ],
+          [
+            -44,
+            0.2775
+          ],
+          [
+            -43,
+            0.2782
+          ],
+          [
+            -42,
+            0.2835
+          ],
+          [
+            -41,
+            0.2801
+          ],
+          [
+            -40,
+            0.288
+          ],
+          [
+            -39,
+            0.2795
+          ],
+          [
+            -38,
+            0.2798
+          ],
+          [
+            -37,
+            0.2825
+          ],
+          [
+            -36,
+            0.2877
+          ],
+          [
+            -35,
+            0.2822
+          ],
+          [
+            -34,
+            0.2827
+          ],
+          [
+            -33,
+            0.2873
+          ],
+          [
+            -32,
+            0.2865
+          ],
+          [
+            -31,
+            0.274
+          ],
+          [
+            -30,
+            0.2864
+          ],
+          [
+            -29,
+            0.2777
+          ],
+          [
+            -28,
+            0.2894
+          ],
+          [
+            -27,
+            0.2824
+          ],
+          [
+            -26,
+            0.2762
+          ],
+          [
+            -25,
+            0.2726
+          ],
+          [
+            -24,
+            0.2846
+          ],
+          [
+            -23,
+            0.2779
+          ],
+          [
+            -22,
+            0.2859
+          ],
+          [
+            -21,
+            0.2762
+          ],
+          [
+            -20,
+            0.2875
+          ],
+          [
+            -19,
+            0.2823
+          ],
+          [
+            -18,
+            0.2911
+          ],
+          [
+            -17,
+            0.2708
+          ],
+          [
+            -16,
+            0.2855
+          ],
+          [
+            -15,
+            0.2739
+          ],
+          [
+            -14,
+            0.2779
+          ],
+          [
+            -13,
+            0.288
+          ],
+          [
+            -12,
+            0.2848
+          ],
+          [
+            -11,
+            0.2711
+          ],
+          [
+            -10,
+            0.2763
+          ],
+          [
+            -9,
+            0.2729
+          ],
+          [
+            -8,
+            0.2802
+          ],
+          [
+            -7,
+            0.2778
+          ],
+          [
+            -6,
+            0.2862
+          ],
+          [
+            -5,
+            0.2743
+          ],
+          [
+            -4,
+            0.2814
+          ],
+          [
+            -3,
+            0.2808
+          ],
+          [
+            -2,
+            0.2775
+          ],
+          [
+            -1,
+            0.2756
+          ],
+          [
+            0,
+            0.2851
+          ]
+        ],
+        "baseline": 0.2822,
+        "current": 0.2791,
+        "peak": 0.2911
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:shipping:p95_latency_ms",
+      "source": "metrics",
+      "service": "shipping",
+      "title": "shipping p95 latency ms: 39ms \u2192 41ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            37.1622
+          ],
+          [
+            -44,
+            42.8223
+          ],
+          [
+            -43,
+            38.7247
+          ],
+          [
+            -42,
+            35.0536
+          ],
+          [
+            -41,
+            38.7091
+          ],
+          [
+            -40,
+            36.1962
+          ],
+          [
+            -39,
+            34.614
+          ],
+          [
+            -38,
+            43.3362
+          ],
+          [
+            -37,
+            42.0266
+          ],
+          [
+            -36,
+            40.9103
+          ],
+          [
+            -35,
+            39.246
+          ],
+          [
+            -34,
+            46.076
+          ],
+          [
+            -33,
+            40.2971
+          ],
+          [
+            -32,
+            46.4086
+          ],
+          [
+            -31,
+            41.9403
+          ],
+          [
+            -30,
+            37.0377
+          ],
+          [
+            -29,
+            37.4026
+          ],
+          [
+            -28,
+            37.4386
+          ],
+          [
+            -27,
+            42.251
+          ],
+          [
+            -26,
+            41.8693
+          ],
+          [
+            -25,
+            44.6839
+          ],
+          [
+            -24,
+            39.6377
+          ],
+          [
+            -23,
+            41.4458
+          ],
+          [
+            -22,
+            37.2852
+          ],
+          [
+            -21,
+            34.0093
+          ],
+          [
+            -20,
+            41.2234
+          ],
+          [
+            -19,
+            43.3972
+          ],
+          [
+            -18,
+            42.3429
+          ],
+          [
+            -17,
+            37.1453
+          ],
+          [
+            -16,
+            38.3232
+          ],
+          [
+            -15,
+            35.9798
+          ],
+          [
+            -14,
+            41.8023
+          ],
+          [
+            -13,
+            36.4305
+          ],
+          [
+            -12,
+            38.7214
+          ],
+          [
+            -11,
+            42.6765
+          ],
+          [
+            -10,
+            32.1614
+          ],
+          [
+            -9,
+            39.3605
+          ],
+          [
+            -8,
+            40.0896
+          ],
+          [
+            -7,
+            41.3735
+          ],
+          [
+            -6,
+            41.2754
+          ],
+          [
+            -5,
+            36.5354
+          ],
+          [
+            -4,
+            42.1819
+          ],
+          [
+            -3,
+            37.0712
+          ],
+          [
+            -2,
+            42.2872
+          ],
+          [
+            -1,
+            43.5438
+          ],
+          [
+            0,
+            41.6065
+          ]
+        ],
+        "baseline": 38.7247,
+        "current": 40.5377,
+        "peak": 46.4086
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:shipping:request_rate",
+      "source": "metrics",
+      "service": "shipping",
+      "title": "shipping request rate: 9.0 req/s \u2192 9.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            8.7518
+          ],
+          [
+            -44,
+            9.0261
+          ],
+          [
+            -43,
+            9.9344
+          ],
+          [
+            -42,
+            8.5705
+          ],
+          [
+            -41,
+            9.9071
+          ],
+          [
+            -40,
+            9.0042
+          ],
+          [
+            -39,
+            9.6206
+          ],
+          [
+            -38,
+            8.3608
+          ],
+          [
+            -37,
+            8.3468
+          ],
+          [
+            -36,
+            9.19
+          ],
+          [
+            -35,
+            8.8048
+          ],
+          [
+            -34,
+            8.1617
+          ],
+          [
+            -33,
+            9.9788
+          ],
+          [
+            -32,
+            9.178
+          ],
+          [
+            -31,
+            8.9279
+          ],
+          [
+            -30,
+            8.2389
+          ],
+          [
+            -29,
+            8.869
+          ],
+          [
+            -28,
+            8.8267
+          ],
+          [
+            -27,
+            9.2769
+          ],
+          [
+            -26,
+            9.0333
+          ],
+          [
+            -25,
+            9.2482
+          ],
+          [
+            -24,
+            9.1673
+          ],
+          [
+            -23,
+            8.8775
+          ],
+          [
+            -22,
+            8.5374
+          ],
+          [
+            -21,
+            9.1632
+          ],
+          [
+            -20,
+            8.7629
+          ],
+          [
+            -19,
+            9.7844
+          ],
+          [
+            -18,
+            9.1076
+          ],
+          [
+            -17,
+            8.2858
+          ],
+          [
+            -16,
+            9.4924
+          ],
+          [
+            -15,
+            9.7061
+          ],
+          [
+            -14,
+            8.6982
+          ],
+          [
+            -13,
+            9.0582
+          ],
+          [
+            -12,
+            8.4605
+          ],
+          [
+            -11,
+            9.0378
+          ],
+          [
+            -10,
+            8.3688
+          ],
+          [
+            -9,
+            8.1878
+          ],
+          [
+            -8,
+            8.3141
+          ],
+          [
+            -7,
+            9.0699
+          ],
+          [
+            -6,
+            9.055
+          ],
+          [
+            -5,
+            9.3425
+          ],
+          [
+            -4,
+            9.8817
+          ],
+          [
+            -3,
+            8.7975
+          ],
+          [
+            -2,
+            8.4957
+          ],
+          [
+            -1,
+            9.1642
+          ],
+          [
+            0,
+            8.8908
+          ]
+        ],
+        "baseline": 9.0042,
+        "current": 9.0954,
+        "peak": 9.9788
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:checkout:afee9be8d559",
+      "source": "traces",
+      "service": "shipping",
+      "title": "Failing trace afee9be8d559: checkout \u2192 shipping",
+      "detail": "failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "afee9be8d5590a2e967b21d023c34c92",
+        "spans": [
+          {
+            "service": "checkout",
+            "operation": "checkout/handle",
+            "duration_ms": 267.0,
+            "error": true,
+            "message": "rpc error calling shipping: code = Internal",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "shipping",
+            "operation": "shipping/handle",
+            "duration_ms": 30.9,
+            "error": true,
+            "message": "failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error",
+            "depth": 1,
+            "kind": "server"
+          }
+        ],
+        "origin": "shipping"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:checkout:summary",
+      "source": "traces",
+      "service": "checkout",
+      "title": "154/200 sampled checkout traces failed in the last 5m; top error origin: shipping",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 154,
+        "error_origins": {
+          "shipping": 154
+        },
+        "latency_contributors_ms": {},
+        "p95_ms": 320.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:shipping:6ce4e7e6f18c",
+      "source": "traces",
+      "service": "shipping",
+      "title": "Failing trace 6ce4e7e6f18c: shipping",
+      "detail": "failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "6ce4e7e6f18c7f168affde37917188eb",
+        "spans": [
+          {
+            "service": "shipping",
+            "operation": "shipping/handle",
+            "duration_ms": 20.3,
+            "error": true,
+            "message": "failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error",
+            "depth": 0,
+            "kind": "server"
+          }
+        ],
+        "origin": "shipping"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:shipping:summary",
+      "source": "traces",
+      "service": "shipping",
+      "title": "181/200 sampled shipping traces failed in the last 5m; top error origin: shipping",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 181,
+        "error_origins": {
+          "shipping": 180,
+          "quote": 1
+        },
+        "latency_contributors_ms": {},
+        "p95_ms": 40.0
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_error_origin",
+      "service": "shipping",
+      "score": 3.5,
+      "summary": "100% of failing checkout traces end in shipping",
+      "evidence_ids": [
+        "traces:checkout:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "count": 154
+      }
+    },
+    {
+      "kind": "trace_error_origin",
+      "service": "shipping",
+      "score": 3.481,
+      "summary": "99% of failing shipping traces end in shipping",
+      "evidence_ids": [
+        "traces:shipping:summary"
+      ],
+      "data": {
+        "share": 0.994475138121547,
+        "count": 180
+      }
+    },
+    {
+      "kind": "dns_failure",
+      "service": "checkout",
+      "score": 1.5,
+      "summary": "checkout cannot resolve its target: failed calling shipping: failed to get shipping quote: error sending request for url (http://quote-s",
+      "evidence_ids": [
+        "logs:checkout:1"
+      ],
+      "data": {}
+    },
+    {
+      "kind": "recent_config_change",
+      "service": "shipping",
+      "score": 1.5,
+      "summary": "deployment/shipping: QUOTE_ADDR 'http://quote:8080' \u2192 'http://quote-svc:8080' 8m before the alert",
+      "evidence_ids": [
+        "changes:shipping:config:0"
+      ],
+      "data": {
+        "minutes_before_alert": 8.5,
+        "key": "QUOTE_ADDR"
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "accounting",
+      "score": 1.5,
+      "summary": "accounting rolled out 2.0.2 \u2192 2.0.3 9m before the alert",
+      "evidence_ids": [
+        "changes:accounting:deploy:2"
+      ],
+      "data": {
+        "minutes_before_alert": 9.4,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "email",
+      "score": 1.5,
+      "summary": "email rolled out 2.0.2 \u2192 2.0.3 15m before the alert",
+      "evidence_ids": [
+        "changes:email:deploy:1"
+      ],
+      "data": {
+        "minutes_before_alert": 15.0,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "dns_failure",
+      "service": "shipping",
+      "score": 1.5,
+      "summary": "shipping cannot resolve a dependency: failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns er",
+      "evidence_ids": [
+        "logs:shipping:1"
+      ],
+      "data": {}
+    },
+    {
+      "kind": "error_spike",
+      "service": "checkout",
+      "score": 1.0,
+      "summary": "checkout error rate 0.4% \u2192 77.7%",
+      "evidence_ids": [
+        "metrics:checkout:error_rate"
+      ],
+      "data": {
+        "baseline": 0.004,
+        "current": 0.7773
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "shipping",
+      "score": 1.0,
+      "summary": "shipping error rate 0.4% \u2192 100.2%",
+      "evidence_ids": [
+        "metrics:shipping:error_rate"
+      ],
+      "data": {
+        "baseline": 0.004,
+        "current": 1.0023
+      }
+    },
+    {
+      "kind": "error_logs",
+      "service": "shipping",
+      "score": 1.0,
+      "summary": "3,888\u00d7 ERROR in shipping: failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquot",
+      "evidence_ids": [
+        "logs:shipping:1"
+      ],
+      "data": {
+        "count": 3888,
+        "message": "failed to get shipping quote: error sending request for url (http://quote-svc:8080/getquote): dns error"
+      }
+    },
+    {
+      "kind": "downstream_errors",
+      "service": "shipping",
+      "score": 0.4,
+      "summary": "checkout logs 1,175 errors calling shipping",
+      "evidence_ids": [
+        "logs:checkout:1"
+      ],
+      "data": {
+        "caller": "checkout"
+      }
+    },
+    {
+      "kind": "restarts",
+      "service": "valkey-cart",
+      "score": 0.3,
+      "summary": "pod/valkey-cart-d23c1bd8-eae42 restarted 1\u00d7",
+      "evidence_ids": [
+        "k8s:valkey-cart:pod_status"
+      ],
+      "data": {}
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-07-09",
+      "title": "Shipping failed after a quote address change",
+      "type": "postmortem",
+      "services": [
+        "shipping",
+        "quote",
+        "checkout"
+      ],
+      "category": "config_change",
+      "date": "2026-07-09",
+      "snippet": "## Summary A Helm values change renamed the quote service address. Shipping could not resolve `quote-svc` and 90% of checkouts failed at the shipping step with `dns error`. ## Root cause Configuration change on shipping (QUOTE_ADDR). Quote itself was healthy and idle. ## Resolution Reverted the env var and redeployed shipping. ## Lessons - `no such host` / `dns error` in a caller plus an idle call\u2026",
+      "score": 82.311
+    },
+    {
+      "id": "PM-2026-01-20",
+      "title": "Payment 1.7.3 release failed card charges with a TypeError",
+      "type": "postmortem",
+      "services": [
+        "payment",
+        "checkout"
+      ],
+      "category": "bad_deploy",
+      "date": "2026-01-20",
+      "snippet": "## Summary A payment release changed the shape of the `amount` object. 35% of charges failed with `TypeError: Cannot read properties of undefined (reading 'units')`. Checkout's error-rate alert fired 9 minutes after rollout. ## Root cause Bad deploy. The new code assumed `amount.units` was always set; older clients sent `amount.nanos` only. ## Resolution `kubectl rollout undo deployment/payment`. \u2026",
+      "score": 34.617
+    },
+    {
+      "id": "RB-unavailable",
+      "title": "A downstream service is unreachable",
+      "type": "runbook",
+      "services": [
+        "*"
+      ],
+      "category": "dependency_unavailable",
+      "date": null,
+      "snippet": "Signs: callers log `connection refused` / `no such host`; the callee's request rate drops to ~0. 1. `kubectl -n otel-demo get deploy <svc>` - are there 0 ready replicas? Scaled to zero? 2. `kubectl -n otel-demo get endpoints <svc>`. 3. If the name doesn't resolve, the *caller's* config is wrong (see RB-flagd / env diffs). Fix: `kubectl -n otel-demo scale deployment/<svc> --replicas=1`.",
+      "score": 16.359
+    },
+    {
+      "id": "PM-2026-08-02",
+      "title": "Currency crash loop after a release missing its data file",
+      "type": "postmortem",
+      "services": [
+        "currency",
+        "frontend",
+        "checkout"
+      ],
+      "category": "crash_loop",
+      "date": "2026-08-02",
+      "snippet": "## Summary Currency 2.0.1 shipped without `currency_conversion.json`. Pods exited on start-up (`std::runtime_error`), entered CrashLoopBackOff and frontend errors reached 60% because almost every page converts prices. ## Root cause Crash loop introduced by a bad release (packaging error). ## Resolution `kubectl rollout undo deployment/currency`. ## Lessons - `waiting: CrashLoopBackOff` + near-zero\u2026",
+      "score": 15.702
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 15.091
+    }
+  ],
+  "services_examined": [
+    "checkout",
+    "shipping",
+    "quote"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "shipping",
+    "expected_category": "config_change",
+    "predicted_service": "shipping",
+    "predicted_category": "config_change",
+    "confidence": 0.95
+  },
+  "slack_posted": false
+}

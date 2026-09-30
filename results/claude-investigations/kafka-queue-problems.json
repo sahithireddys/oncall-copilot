@@ -1,0 +1,2624 @@
+{
+  "id": "8ac5d64fee84",
+  "alert": {
+    "name": "AccountingConsumerLagHigh",
+    "service": "accounting",
+    "severity": "warning",
+    "summary": "accounting consumer lag > 1000 messages",
+    "labels": {
+      "scenario_id": "kafka-queue-problems"
+    },
+    "starts_at": "2026-09-30T02:50:51.469996Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "kafka-queue-problems",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:50:51.470572Z",
+  "completed_at": "2026-09-30T02:51:23.976411Z",
+  "duration_ms": 32504,
+  "hypothesis": {
+    "root_cause_service": "accounting",
+    "category": "queue_backlog",
+    "title": "Accounting consumer intrinsically slow (~480ms/msg), causing lag spike to 2,238",
+    "summary": "The accounting Kafka consumer began processing messages very slowly (~480ms each, up from ~30ms) around 10 minutes before the alert, with no corresponding slowdown in its postgresql dependency (p95 stable at 4ms). Accounting's own spans account for 100% of the added latency. With CPU and memory utilization normal and no recent deploy or config change to accounting, the consumer is intrinsically too slow per message, causing lag to grow from 12 to over 2,200 messages.",
+    "reasoning": "The alert fired on accounting consumer lag exceeding 1000 messages. The evidence shows accounting's p95 latency jumped from ~36ms to 491ms starting around -10m, and consumer lag grew from ~12 to 2,238 messages in the same window. The slow trace shows accounting's own span (accounting/handle) taking 424ms, and logs confirm \"Consumer poll interval exceeded; processing 1 message took 480ms.\" This indicates accounting itself is slow, not just propagating errors. I need to determine why accounting became slow. Accounting calls postgresql, so I checked postgresql's metrics: p95 latency is stable at ~4ms, CPU ~12%, memory ~45%, request rate steady, error rate flat at 0.4%. PostgreSQL is healthy. Accounting's own CPU is 11% and memory 40%, so it is not saturated or leaking. The frontend-proxy deploy at -25m is a red herring: it happened 15 minutes before accounting's latency spike at -10m, and frontend-proxy does not call accounting (kafka does). The valkey-cart restart (exit 137, OOMKilled) is also unrelated\u2014accounting does not depend on valkey-cart. Postmortem PM-2026-06-17 describes a similar pattern (accounting lag from slow Postgres), but here Postgres is demonstrably healthy. With no deploy, config change, or dependency issue, and accounting's own spans being slow while its CPU/memory are fine, the most likely mechanism is that accounting's message-processing logic has become intrinsically slow\u2014possibly due to a data pattern or an unobserved internal bottleneck. This fits the queue_backlog category: the consumer is too slow per message, dependencies are healthy, and no other specific mechanism (CPU, memory, crash) applies.",
+    "confidence": 0.72,
+    "supporting_evidence": [
+      {
+        "evidence_id": "traces:accounting:29ffb8b4c212",
+        "why_it_matters": "Shows a single accounting span (accounting/handle) taking 424ms, confirming the slowness originates in accounting's own processing, not a downstream call."
+      },
+      {
+        "evidence_id": "logs:accounting:1",
+        "why_it_matters": "300 log entries stating 'processing 1 message took 480ms' directly confirm the per-message slowdown in the consumer."
+      },
+      {
+        "evidence_id": "metrics:postgresql:p95_latency_ms",
+        "why_it_matters": "PostgreSQL p95 latency is stable at ~4ms throughout the incident, ruling out datastore degradation as the cause."
+      },
+      {
+        "evidence_id": "metrics:accounting:cpu_utilization",
+        "why_it_matters": "Accounting CPU remains around 11%, ruling out CPU saturation as the mechanism."
+      },
+      {
+        "evidence_id": "metrics:accounting:memory_utilization",
+        "why_it_matters": "Memory is flat at ~40%, ruling out memory leak or GC pressure."
+      },
+      {
+        "evidence_id": "changes:frontend-proxy:deploy:0",
+        "why_it_matters": "Frontend-proxy deploy at -25m is 15 minutes before the spike and frontend-proxy does not call accounting, so this is a red herring."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Inspect accounting logs and recent messages for anomalous data patterns",
+        "command": "kubectl logs -n otel-demo deploy/accounting --since=30m | grep -A5 -B5 'took 480ms'",
+        "risk": "low",
+        "rationale": "The slowdown may be triggered by a specific message shape or data pattern (e.g., large payloads, complex transactions). Check logs around -15m to -10m for unusual entries or stack traces."
+      },
+      {
+        "title": "Scale accounting consumer replicas to increase throughput and drain the lag",
+        "command": "kubectl scale -n otel-demo deploy/accounting --replicas=3",
+        "risk": "low",
+        "rationale": "Even if the per-message slowness persists, adding replicas will increase aggregate throughput and prevent lag from growing further while you investigate the root cause."
+      },
+      {
+        "title": "Restart accounting pods to clear any transient internal state",
+        "command": "kubectl rollout restart -n otel-demo deploy/accounting",
+        "risk": "medium",
+        "rationale": "If an in-memory cache, connection, or internal queue is stuck, a restart may restore normal processing speed. However, this is speculative and may only provide temporary relief."
+      }
+    ],
+    "related_documents": [
+      "RB-kafka-lag",
+      "PM-2026-06-17"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "postgresql",
+        "category": "datastore_degradation",
+        "why_less_likely": "PostgreSQL's own p95 latency is stable at 4ms, CPU at 12%, and error rate flat. Postmortem PM-2026-06-17 had a similar symptom but Postgres was demonstrably slow there; here it is healthy."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:frontend-proxy:deploy:0",
+      "source": "changes",
+      "service": "frontend-proxy",
+      "title": "deployment/frontend-proxy rolled out 2.0.2 \u2192 2.0.3 (25m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/frontend-proxy",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 25.1
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:valkey-cart:pod_status",
+      "source": "k8s_events",
+      "service": "valkey-cart",
+      "title": "pod/valkey-cart-c2d0bd34-fa091 restarts=1, last terminated: Error (exit code 137)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/valkey-cart-c2d0bd34-fa091",
+        "phase": "Running",
+        "restarts": 1,
+        "last_termination_reason": "Error (exit code 137)",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:accounting:1",
+      "source": "logs",
+      "service": "accounting",
+      "title": "300\u00d7 WARN Consumer poll interval exceeded; processing 1 message took 480ms",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "Consumer poll interval exceeded; processing 1 message took 480ms",
+        "level": "WARN",
+        "count": 300,
+        "sample": "Consumer poll interval exceeded; processing 1 message took 480ms",
+        "first_seen_min": -15.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:accounting:2",
+      "source": "logs",
+      "service": "accounting",
+      "title": "4\u00d7 WARN consumer group rebalancing: member left group",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "consumer group rebalancing: member left group",
+        "level": "WARN",
+        "count": 4,
+        "sample": "consumer group rebalancing: member left group",
+        "first_seen_min": -12.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:consumer_lag",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting consumer lag: 12 \u2192 2,238",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "consumer_lag",
+        "unit": "messages",
+        "series": [
+          [
+            -45,
+            12.2052
+          ],
+          [
+            -44,
+            11.925
+          ],
+          [
+            -43,
+            12.8483
+          ],
+          [
+            -42,
+            12.9289
+          ],
+          [
+            -41,
+            11.2329
+          ],
+          [
+            -40,
+            10.8382
+          ],
+          [
+            -39,
+            11.0959
+          ],
+          [
+            -38,
+            11.9838
+          ],
+          [
+            -37,
+            12.2466
+          ],
+          [
+            -36,
+            11.7956
+          ],
+          [
+            -35,
+            12.1905
+          ],
+          [
+            -34,
+            12.4483
+          ],
+          [
+            -33,
+            12.0954
+          ],
+          [
+            -32,
+            11.6414
+          ],
+          [
+            -31,
+            11.8391
+          ],
+          [
+            -30,
+            12.5648
+          ],
+          [
+            -29,
+            12.0971
+          ],
+          [
+            -28,
+            11.994
+          ],
+          [
+            -27,
+            11.209
+          ],
+          [
+            -26,
+            12.4251
+          ],
+          [
+            -25,
+            12.6329
+          ],
+          [
+            -24,
+            11.8712
+          ],
+          [
+            -23,
+            11.3726
+          ],
+          [
+            -22,
+            11.9758
+          ],
+          [
+            -21,
+            11.6692
+          ],
+          [
+            -20,
+            12.3454
+          ],
+          [
+            -19,
+            11.5687
+          ],
+          [
+            -18,
+            11.5092
+          ],
+          [
+            -17,
+            11.1755
+          ],
+          [
+            -16,
+            11.0917
+          ],
+          [
+            -15,
+            11.3903
+          ],
+          [
+            -14,
+            172.3528
+          ],
+          [
+            -13,
+            353.3834
+          ],
+          [
+            -12,
+            524.1091
+          ],
+          [
+            -11,
+            662.7133
+          ],
+          [
+            -10,
+            876.4457
+          ],
+          [
+            -9,
+            1052.3908
+          ],
+          [
+            -8,
+            1272.8764
+          ],
+          [
+            -7,
+            1352.9239
+          ],
+          [
+            -6,
+            1660.5676
+          ],
+          [
+            -5,
+            1757.604
+          ],
+          [
+            -4,
+            1974.3981
+          ],
+          [
+            -3,
+            2008.6455
+          ],
+          [
+            -2,
+            2322.5794
+          ],
+          [
+            -1,
+            2495.5853
+          ],
+          [
+            0,
+            2869.2906
+          ]
+        ],
+        "baseline": 11.9838,
+        "current": 2238.0172,
+        "peak": 2869.2906
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:cpu_utilization",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting cpu utilization: 11.1% \u2192 10.9% (peak 12.5%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.116
+          ],
+          [
+            -44,
+            0.1091
+          ],
+          [
+            -43,
+            0.1067
+          ],
+          [
+            -42,
+            0.1135
+          ],
+          [
+            -41,
+            0.1107
+          ],
+          [
+            -40,
+            0.1052
+          ],
+          [
+            -39,
+            0.1113
+          ],
+          [
+            -38,
+            0.1086
+          ],
+          [
+            -37,
+            0.1136
+          ],
+          [
+            -36,
+            0.1102
+          ],
+          [
+            -35,
+            0.1187
+          ],
+          [
+            -34,
+            0.1132
+          ],
+          [
+            -33,
+            0.1159
+          ],
+          [
+            -32,
+            0.1095
+          ],
+          [
+            -31,
+            0.1129
+          ],
+          [
+            -30,
+            0.1192
+          ],
+          [
+            -29,
+            0.1247
+          ],
+          [
+            -28,
+            0.1055
+          ],
+          [
+            -27,
+            0.1232
+          ],
+          [
+            -26,
+            0.1128
+          ],
+          [
+            -25,
+            0.1137
+          ],
+          [
+            -24,
+            0.1127
+          ],
+          [
+            -23,
+            0.1142
+          ],
+          [
+            -22,
+            0.1076
+          ],
+          [
+            -21,
+            0.119
+          ],
+          [
+            -20,
+            0.1233
+          ],
+          [
+            -19,
+            0.1139
+          ],
+          [
+            -18,
+            0.1117
+          ],
+          [
+            -17,
+            0.1153
+          ],
+          [
+            -16,
+            0.1108
+          ],
+          [
+            -15,
+            0.1106
+          ],
+          [
+            -14,
+            0.1091
+          ],
+          [
+            -13,
+            0.1128
+          ],
+          [
+            -12,
+            0.1058
+          ],
+          [
+            -11,
+            0.111
+          ],
+          [
+            -10,
+            0.1113
+          ],
+          [
+            -9,
+            0.1118
+          ],
+          [
+            -8,
+            0.111
+          ],
+          [
+            -7,
+            0.1056
+          ],
+          [
+            -6,
+            0.1074
+          ],
+          [
+            -5,
+            0.1171
+          ],
+          [
+            -4,
+            0.1087
+          ],
+          [
+            -3,
+            0.107
+          ],
+          [
+            -2,
+            0.1152
+          ],
+          [
+            -1,
+            0.1089
+          ],
+          [
+            0,
+            0.0982
+          ]
+        ],
+        "baseline": 0.1107,
+        "current": 0.1092,
+        "peak": 0.1247
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:error_rate",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0043
+          ],
+          [
+            -44,
+            0.0047
+          ],
+          [
+            -43,
+            0.0049
+          ],
+          [
+            -42,
+            0.0049
+          ],
+          [
+            -41,
+            0.0044
+          ],
+          [
+            -40,
+            0.0051
+          ],
+          [
+            -39,
+            0.0034
+          ],
+          [
+            -38,
+            0.004
+          ],
+          [
+            -37,
+            0.0042
+          ],
+          [
+            -36,
+            0.0045
+          ],
+          [
+            -35,
+            0.0042
+          ],
+          [
+            -34,
+            0.0038
+          ],
+          [
+            -33,
+            0.0044
+          ],
+          [
+            -32,
+            0.0037
+          ],
+          [
+            -31,
+            0.0038
+          ],
+          [
+            -30,
+            0.0052
+          ],
+          [
+            -29,
+            0.0028
+          ],
+          [
+            -28,
+            0.0048
+          ],
+          [
+            -27,
+            0.0034
+          ],
+          [
+            -26,
+            0.0041
+          ],
+          [
+            -25,
+            0.0055
+          ],
+          [
+            -24,
+            0.004
+          ],
+          [
+            -23,
+            0.0043
+          ],
+          [
+            -22,
+            0.0041
+          ],
+          [
+            -21,
+            0.0036
+          ],
+          [
+            -20,
+            0.0049
+          ],
+          [
+            -19,
+            0.0038
+          ],
+          [
+            -18,
+            0.0048
+          ],
+          [
+            -17,
+            0.0031
+          ],
+          [
+            -16,
+            0.0043
+          ],
+          [
+            -15,
+            0.0036
+          ],
+          [
+            -14,
+            0.0047
+          ],
+          [
+            -13,
+            0.0041
+          ],
+          [
+            -12,
+            0.005
+          ],
+          [
+            -11,
+            0.004
+          ],
+          [
+            -10,
+            0.0041
+          ],
+          [
+            -9,
+            0.004
+          ],
+          [
+            -8,
+            0.0048
+          ],
+          [
+            -7,
+            0.0046
+          ],
+          [
+            -6,
+            0.0057
+          ],
+          [
+            -5,
+            0.0036
+          ],
+          [
+            -4,
+            0.0037
+          ],
+          [
+            -3,
+            0.0044
+          ],
+          [
+            -2,
+            0.0049
+          ],
+          [
+            -1,
+            0.0039
+          ],
+          [
+            0,
+            0.0046
+          ]
+        ],
+        "baseline": 0.0044,
+        "current": 0.0042,
+        "peak": 0.0057
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:memory_utilization",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting memory utilization: 40.1% \u2192 40.1% (peak 41.5%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.4052
+          ],
+          [
+            -44,
+            0.4129
+          ],
+          [
+            -43,
+            0.4134
+          ],
+          [
+            -42,
+            0.3959
+          ],
+          [
+            -41,
+            0.389
+          ],
+          [
+            -40,
+            0.3891
+          ],
+          [
+            -39,
+            0.3986
+          ],
+          [
+            -38,
+            0.4037
+          ],
+          [
+            -37,
+            0.4051
+          ],
+          [
+            -36,
+            0.4014
+          ],
+          [
+            -35,
+            0.3986
+          ],
+          [
+            -34,
+            0.3982
+          ],
+          [
+            -33,
+            0.4051
+          ],
+          [
+            -32,
+            0.4018
+          ],
+          [
+            -31,
+            0.3938
+          ],
+          [
+            -30,
+            0.3871
+          ],
+          [
+            -29,
+            0.4107
+          ],
+          [
+            -28,
+            0.3976
+          ],
+          [
+            -27,
+            0.407
+          ],
+          [
+            -26,
+            0.4121
+          ],
+          [
+            -25,
+            0.4127
+          ],
+          [
+            -24,
+            0.4109
+          ],
+          [
+            -23,
+            0.3869
+          ],
+          [
+            -22,
+            0.4127
+          ],
+          [
+            -21,
+            0.4111
+          ],
+          [
+            -20,
+            0.4061
+          ],
+          [
+            -19,
+            0.4059
+          ],
+          [
+            -18,
+            0.4002
+          ],
+          [
+            -17,
+            0.3968
+          ],
+          [
+            -16,
+            0.3996
+          ],
+          [
+            -15,
+            0.4068
+          ],
+          [
+            -14,
+            0.4081
+          ],
+          [
+            -13,
+            0.4102
+          ],
+          [
+            -12,
+            0.4017
+          ],
+          [
+            -11,
+            0.3927
+          ],
+          [
+            -10,
+            0.4074
+          ],
+          [
+            -9,
+            0.4146
+          ],
+          [
+            -8,
+            0.4047
+          ],
+          [
+            -7,
+            0.4053
+          ],
+          [
+            -6,
+            0.3979
+          ],
+          [
+            -5,
+            0.41
+          ],
+          [
+            -4,
+            0.3965
+          ],
+          [
+            -3,
+            0.399
+          ],
+          [
+            -2,
+            0.4098
+          ],
+          [
+            -1,
+            0.3971
+          ],
+          [
+            0,
+            0.3927
+          ]
+        ],
+        "baseline": 0.4014,
+        "current": 0.4008,
+        "peak": 0.4146
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:p95_latency_ms",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting p95 latency ms: 36ms \u2192 491ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            31.4796
+          ],
+          [
+            -44,
+            36.146
+          ],
+          [
+            -43,
+            32.5056
+          ],
+          [
+            -42,
+            32.5169
+          ],
+          [
+            -41,
+            36.1261
+          ],
+          [
+            -40,
+            35.9609
+          ],
+          [
+            -39,
+            34.4641
+          ],
+          [
+            -38,
+            36.795
+          ],
+          [
+            -37,
+            41.1138
+          ],
+          [
+            -36,
+            37.1329
+          ],
+          [
+            -35,
+            32.7633
+          ],
+          [
+            -34,
+            32.8499
+          ],
+          [
+            -33,
+            38.0766
+          ],
+          [
+            -32,
+            30.7962
+          ],
+          [
+            -31,
+            34.4936
+          ],
+          [
+            -30,
+            36.9939
+          ],
+          [
+            -29,
+            32.941
+          ],
+          [
+            -28,
+            36.4377
+          ],
+          [
+            -27,
+            34.9996
+          ],
+          [
+            -26,
+            35.176
+          ],
+          [
+            -25,
+            30.5876
+          ],
+          [
+            -24,
+            34.2276
+          ],
+          [
+            -23,
+            35.1427
+          ],
+          [
+            -22,
+            34.8194
+          ],
+          [
+            -21,
+            34.6253
+          ],
+          [
+            -20,
+            35.24
+          ],
+          [
+            -19,
+            32.4944
+          ],
+          [
+            -18,
+            31.9264
+          ],
+          [
+            -17,
+            36.3708
+          ],
+          [
+            -16,
+            35.6936
+          ],
+          [
+            -15,
+            35.3299
+          ],
+          [
+            -14,
+            245.0418
+          ],
+          [
+            -13,
+            479.3095
+          ],
+          [
+            -12,
+            527.5881
+          ],
+          [
+            -11,
+            423.4611
+          ],
+          [
+            -10,
+            441.7062
+          ],
+          [
+            -9,
+            443.7487
+          ],
+          [
+            -8,
+            446.2512
+          ],
+          [
+            -7,
+            496.7629
+          ],
+          [
+            -6,
+            491.3371
+          ],
+          [
+            -5,
+            381.9497
+          ],
+          [
+            -4,
+            526.8049
+          ],
+          [
+            -3,
+            503.9992
+          ],
+          [
+            -2,
+            475.6729
+          ],
+          [
+            -1,
+            538.0661
+          ],
+          [
+            0,
+            518.709
+          ]
+        ],
+        "baseline": 35.9609,
+        "current": 490.867,
+        "peak": 538.0661
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:request_rate",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting request rate: 3.1 req/s \u2192 3.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            3.1992
+          ],
+          [
+            -44,
+            3.0917
+          ],
+          [
+            -43,
+            3.003
+          ],
+          [
+            -42,
+            3.1695
+          ],
+          [
+            -41,
+            3.0415
+          ],
+          [
+            -40,
+            3.1498
+          ],
+          [
+            -39,
+            2.7832
+          ],
+          [
+            -38,
+            3.218
+          ],
+          [
+            -37,
+            3.3718
+          ],
+          [
+            -36,
+            2.985
+          ],
+          [
+            -35,
+            3.397
+          ],
+          [
+            -34,
+            3.2394
+          ],
+          [
+            -33,
+            3.1267
+          ],
+          [
+            -32,
+            3.3426
+          ],
+          [
+            -31,
+            3.1853
+          ],
+          [
+            -30,
+            3.1799
+          ],
+          [
+            -29,
+            3.2199
+          ],
+          [
+            -28,
+            3.3157
+          ],
+          [
+            -27,
+            3.3263
+          ],
+          [
+            -26,
+            3.0914
+          ],
+          [
+            -25,
+            3.1284
+          ],
+          [
+            -24,
+            3.1758
+          ],
+          [
+            -23,
+            3.0308
+          ],
+          [
+            -22,
+            3.2822
+          ],
+          [
+            -21,
+            2.9149
+          ],
+          [
+            -20,
+            3.049
+          ],
+          [
+            -19,
+            3.1368
+          ],
+          [
+            -18,
+            3.1935
+          ],
+          [
+            -17,
+            3.3178
+          ],
+          [
+            -16,
+            3.4074
+          ],
+          [
+            -15,
+            2.9397
+          ],
+          [
+            -14,
+            3.1936
+          ],
+          [
+            -13,
+            3.1996
+          ],
+          [
+            -12,
+            3.3136
+          ],
+          [
+            -11,
+            3.3283
+          ],
+          [
+            -10,
+            3.6166
+          ],
+          [
+            -9,
+            3.0931
+          ],
+          [
+            -8,
+            3.1459
+          ],
+          [
+            -7,
+            3.2202
+          ],
+          [
+            -6,
+            3.2023
+          ],
+          [
+            -5,
+            3.216
+          ],
+          [
+            -4,
+            2.7185
+          ],
+          [
+            -3,
+            3.1368
+          ],
+          [
+            -2,
+            3.0647
+          ],
+          [
+            -1,
+            3.2745
+          ],
+          [
+            0,
+            3.2692
+          ]
+        ],
+        "baseline": 3.1498,
+        "current": 3.1133,
+        "peak": 3.6166
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:cpu_utilization",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql cpu utilization: 12.0% \u2192 11.7% (peak 13.3%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1221
+          ],
+          [
+            -44,
+            0.1198
+          ],
+          [
+            -43,
+            0.1235
+          ],
+          [
+            -42,
+            0.1154
+          ],
+          [
+            -41,
+            0.1181
+          ],
+          [
+            -40,
+            0.1176
+          ],
+          [
+            -39,
+            0.1115
+          ],
+          [
+            -38,
+            0.1287
+          ],
+          [
+            -37,
+            0.1289
+          ],
+          [
+            -36,
+            0.1108
+          ],
+          [
+            -35,
+            0.1282
+          ],
+          [
+            -34,
+            0.1229
+          ],
+          [
+            -33,
+            0.121
+          ],
+          [
+            -32,
+            0.1145
+          ],
+          [
+            -31,
+            0.1184
+          ],
+          [
+            -30,
+            0.1292
+          ],
+          [
+            -29,
+            0.1206
+          ],
+          [
+            -28,
+            0.1177
+          ],
+          [
+            -27,
+            0.1197
+          ],
+          [
+            -26,
+            0.1125
+          ],
+          [
+            -25,
+            0.1184
+          ],
+          [
+            -24,
+            0.1154
+          ],
+          [
+            -23,
+            0.128
+          ],
+          [
+            -22,
+            0.1271
+          ],
+          [
+            -21,
+            0.1334
+          ],
+          [
+            -20,
+            0.1083
+          ],
+          [
+            -19,
+            0.1173
+          ],
+          [
+            -18,
+            0.1139
+          ],
+          [
+            -17,
+            0.1223
+          ],
+          [
+            -16,
+            0.123
+          ],
+          [
+            -15,
+            0.123
+          ],
+          [
+            -14,
+            0.1179
+          ],
+          [
+            -13,
+            0.1244
+          ],
+          [
+            -12,
+            0.1255
+          ],
+          [
+            -11,
+            0.1199
+          ],
+          [
+            -10,
+            0.1218
+          ],
+          [
+            -9,
+            0.1034
+          ],
+          [
+            -8,
+            0.1196
+          ],
+          [
+            -7,
+            0.1202
+          ],
+          [
+            -6,
+            0.1254
+          ],
+          [
+            -5,
+            0.1244
+          ],
+          [
+            -4,
+            0.1194
+          ],
+          [
+            -3,
+            0.1133
+          ],
+          [
+            -2,
+            0.1101
+          ],
+          [
+            -1,
+            0.1154
+          ],
+          [
+            0,
+            0.1176
+          ]
+        ],
+        "baseline": 0.1198,
+        "current": 0.1167,
+        "peak": 0.1334
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:error_rate",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0051
+          ],
+          [
+            -44,
+            0.0043
+          ],
+          [
+            -43,
+            0.0043
+          ],
+          [
+            -42,
+            0.0043
+          ],
+          [
+            -41,
+            0.0048
+          ],
+          [
+            -40,
+            0.0042
+          ],
+          [
+            -39,
+            0.004
+          ],
+          [
+            -38,
+            0.0045
+          ],
+          [
+            -37,
+            0.0042
+          ],
+          [
+            -36,
+            0.0037
+          ],
+          [
+            -35,
+            0.0045
+          ],
+          [
+            -34,
+            0.0027
+          ],
+          [
+            -33,
+            0.0035
+          ],
+          [
+            -32,
+            0.0038
+          ],
+          [
+            -31,
+            0.0034
+          ],
+          [
+            -30,
+            0.0044
+          ],
+          [
+            -29,
+            0.0046
+          ],
+          [
+            -28,
+            0.0036
+          ],
+          [
+            -27,
+            0.0041
+          ],
+          [
+            -26,
+            0.0042
+          ],
+          [
+            -25,
+            0.0043
+          ],
+          [
+            -24,
+            0.0032
+          ],
+          [
+            -23,
+            0.0036
+          ],
+          [
+            -22,
+            0.0035
+          ],
+          [
+            -21,
+            0.004
+          ],
+          [
+            -20,
+            0.0051
+          ],
+          [
+            -19,
+            0.0038
+          ],
+          [
+            -18,
+            0.0047
+          ],
+          [
+            -17,
+            0.0044
+          ],
+          [
+            -16,
+            0.0046
+          ],
+          [
+            -15,
+            0.0043
+          ],
+          [
+            -14,
+            0.0048
+          ],
+          [
+            -13,
+            0.005
+          ],
+          [
+            -12,
+            0.0039
+          ],
+          [
+            -11,
+            0.0046
+          ],
+          [
+            -10,
+            0.0029
+          ],
+          [
+            -9,
+            0.0032
+          ],
+          [
+            -8,
+            0.0034
+          ],
+          [
+            -7,
+            0.0028
+          ],
+          [
+            -6,
+            0.0042
+          ],
+          [
+            -5,
+            0.0042
+          ],
+          [
+            -4,
+            0.0043
+          ],
+          [
+            -3,
+            0.0039
+          ],
+          [
+            -2,
+            0.0029
+          ],
+          [
+            -1,
+            0.0049
+          ],
+          [
+            0,
+            0.0045
+          ]
+        ],
+        "baseline": 0.0043,
+        "current": 0.0041,
+        "peak": 0.0051
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:memory_utilization",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql memory utilization: 45.2% \u2192 45.8% (peak 47.0%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.4562
+          ],
+          [
+            -44,
+            0.4387
+          ],
+          [
+            -43,
+            0.4696
+          ],
+          [
+            -42,
+            0.453
+          ],
+          [
+            -41,
+            0.439
+          ],
+          [
+            -40,
+            0.4553
+          ],
+          [
+            -39,
+            0.449
+          ],
+          [
+            -38,
+            0.451
+          ],
+          [
+            -37,
+            0.4291
+          ],
+          [
+            -36,
+            0.4549
+          ],
+          [
+            -35,
+            0.452
+          ],
+          [
+            -34,
+            0.4613
+          ],
+          [
+            -33,
+            0.4508
+          ],
+          [
+            -32,
+            0.4494
+          ],
+          [
+            -31,
+            0.4581
+          ],
+          [
+            -30,
+            0.4605
+          ],
+          [
+            -29,
+            0.4689
+          ],
+          [
+            -28,
+            0.46
+          ],
+          [
+            -27,
+            0.4521
+          ],
+          [
+            -26,
+            0.4469
+          ],
+          [
+            -25,
+            0.4569
+          ],
+          [
+            -24,
+            0.4612
+          ],
+          [
+            -23,
+            0.4417
+          ],
+          [
+            -22,
+            0.4509
+          ],
+          [
+            -21,
+            0.4531
+          ],
+          [
+            -20,
+            0.4544
+          ],
+          [
+            -19,
+            0.4543
+          ],
+          [
+            -18,
+            0.4503
+          ],
+          [
+            -17,
+            0.459
+          ],
+          [
+            -16,
+            0.4574
+          ],
+          [
+            -15,
+            0.4677
+          ],
+          [
+            -14,
+            0.4557
+          ],
+          [
+            -13,
+            0.4459
+          ],
+          [
+            -12,
+            0.4393
+          ],
+          [
+            -11,
+            0.4485
+          ],
+          [
+            -10,
+            0.4518
+          ],
+          [
+            -9,
+            0.4443
+          ],
+          [
+            -8,
+            0.4408
+          ],
+          [
+            -7,
+            0.4393
+          ],
+          [
+            -6,
+            0.4413
+          ],
+          [
+            -5,
+            0.4666
+          ],
+          [
+            -4,
+            0.4704
+          ],
+          [
+            -3,
+            0.457
+          ],
+          [
+            -2,
+            0.4569
+          ],
+          [
+            -1,
+            0.4492
+          ],
+          [
+            0,
+            0.4463
+          ]
+        ],
+        "baseline": 0.452,
+        "current": 0.4577,
+        "peak": 0.4704
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:p95_latency_ms",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql p95 latency ms: 4ms \u2192 4ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            4.3219
+          ],
+          [
+            -44,
+            3.797
+          ],
+          [
+            -43,
+            3.6015
+          ],
+          [
+            -42,
+            4.1986
+          ],
+          [
+            -41,
+            4.2271
+          ],
+          [
+            -40,
+            3.9176
+          ],
+          [
+            -39,
+            4.101
+          ],
+          [
+            -38,
+            4.2675
+          ],
+          [
+            -37,
+            3.9105
+          ],
+          [
+            -36,
+            4.3436
+          ],
+          [
+            -35,
+            4.0503
+          ],
+          [
+            -34,
+            3.6615
+          ],
+          [
+            -33,
+            4.1036
+          ],
+          [
+            -32,
+            4.0233
+          ],
+          [
+            -31,
+            4.1941
+          ],
+          [
+            -30,
+            4.3953
+          ],
+          [
+            -29,
+            3.9842
+          ],
+          [
+            -28,
+            3.9837
+          ],
+          [
+            -27,
+            4.3747
+          ],
+          [
+            -26,
+            4.0934
+          ],
+          [
+            -25,
+            3.7252
+          ],
+          [
+            -24,
+            4.3719
+          ],
+          [
+            -23,
+            3.9191
+          ],
+          [
+            -22,
+            4.2245
+          ],
+          [
+            -21,
+            4.1212
+          ],
+          [
+            -20,
+            3.7699
+          ],
+          [
+            -19,
+            4.3456
+          ],
+          [
+            -18,
+            3.7784
+          ],
+          [
+            -17,
+            4.0259
+          ],
+          [
+            -16,
+            3.5448
+          ],
+          [
+            -15,
+            3.9961
+          ],
+          [
+            -14,
+            3.9569
+          ],
+          [
+            -13,
+            4.6426
+          ],
+          [
+            -12,
+            4.2901
+          ],
+          [
+            -11,
+            3.708
+          ],
+          [
+            -10,
+            3.8221
+          ],
+          [
+            -9,
+            4.2028
+          ],
+          [
+            -8,
+            3.7295
+          ],
+          [
+            -7,
+            4.1834
+          ],
+          [
+            -6,
+            3.9659
+          ],
+          [
+            -5,
+            3.759
+          ],
+          [
+            -4,
+            4.1392
+          ],
+          [
+            -3,
+            3.9149
+          ],
+          [
+            -2,
+            4.0903
+          ],
+          [
+            -1,
+            4.199
+          ],
+          [
+            0,
+            4.1607
+          ]
+        ],
+        "baseline": 4.101,
+        "current": 4.0438,
+        "peak": 4.6426
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:request_rate",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql request rate: 40.3 req/s \u2192 40.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            41.8076
+          ],
+          [
+            -44,
+            42.8575
+          ],
+          [
+            -43,
+            37.733
+          ],
+          [
+            -42,
+            38.024
+          ],
+          [
+            -41,
+            39.4841
+          ],
+          [
+            -40,
+            40.8097
+          ],
+          [
+            -39,
+            41.6801
+          ],
+          [
+            -38,
+            42.4836
+          ],
+          [
+            -37,
+            40.3314
+          ],
+          [
+            -36,
+            40.2358
+          ],
+          [
+            -35,
+            37.3937
+          ],
+          [
+            -34,
+            39.6266
+          ],
+          [
+            -33,
+            39.8949
+          ],
+          [
+            -32,
+            41.9719
+          ],
+          [
+            -31,
+            40.3353
+          ],
+          [
+            -30,
+            40.1881
+          ],
+          [
+            -29,
+            37.7023
+          ],
+          [
+            -28,
+            38.8882
+          ],
+          [
+            -27,
+            39.0754
+          ],
+          [
+            -26,
+            37.26
+          ],
+          [
+            -25,
+            39.4939
+          ],
+          [
+            -24,
+            42.0762
+          ],
+          [
+            -23,
+            36.8157
+          ],
+          [
+            -22,
+            37.1215
+          ],
+          [
+            -21,
+            38.7265
+          ],
+          [
+            -20,
+            42.8993
+          ],
+          [
+            -19,
+            41.6484
+          ],
+          [
+            -18,
+            39.8405
+          ],
+          [
+            -17,
+            39.2496
+          ],
+          [
+            -16,
+            42.6845
+          ],
+          [
+            -15,
+            41.6872
+          ],
+          [
+            -14,
+            36.742
+          ],
+          [
+            -13,
+            37.6621
+          ],
+          [
+            -12,
+            41.0596
+          ],
+          [
+            -11,
+            39.2986
+          ],
+          [
+            -10,
+            37.0312
+          ],
+          [
+            -9,
+            40.6584
+          ],
+          [
+            -8,
+            40.6473
+          ],
+          [
+            -7,
+            42.0478
+          ],
+          [
+            -6,
+            41.6681
+          ],
+          [
+            -5,
+            39.3323
+          ],
+          [
+            -4,
+            39.8221
+          ],
+          [
+            -3,
+            38.8348
+          ],
+          [
+            -2,
+            40.6621
+          ],
+          [
+            -1,
+            41.4106
+          ],
+          [
+            0,
+            40.4465
+          ]
+        ],
+        "baseline": 40.3314,
+        "current": 40.0847,
+        "peak": 42.8993
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:accounting:29ffb8b4c212",
+      "source": "traces",
+      "service": "accounting",
+      "title": "Slow trace 29ffb8b4c212: 1 spans, 424ms in accounting",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "29ffb8b4c2120a8187353b4ddea4ac26",
+        "spans": [
+          {
+            "service": "accounting",
+            "operation": "accounting/handle",
+            "duration_ms": 424.4,
+            "error": false,
+            "message": "",
+            "depth": 0,
+            "kind": "server"
+          }
+        ],
+        "origin": "accounting",
+        "slow": true
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:accounting:summary",
+      "source": "traces",
+      "service": "accounting",
+      "title": "1/200 sampled accounting traces failed in the last 5m; top error origin: accounting",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 1,
+        "error_origins": {
+          "accounting": 1
+        },
+        "latency_contributors_ms": {
+          "accounting": 450.0
+        },
+        "p95_ms": 485.0
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_latency_origin",
+      "service": "accounting",
+      "score": 3.0,
+      "summary": "accounting accounts for 100% of added latency in accounting traces (+450ms)",
+      "evidence_ids": [
+        "traces:accounting:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 450.0
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "accounting",
+      "score": 0.8,
+      "summary": "accounting p95 36ms \u2192 491ms",
+      "evidence_ids": [
+        "metrics:accounting:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 35.9609,
+        "current": 490.867
+      }
+    },
+    {
+      "kind": "consumer_lag",
+      "service": "accounting",
+      "score": 0.8,
+      "summary": "accounting consumer lag 12 \u2192 2,238",
+      "evidence_ids": [
+        "metrics:accounting:consumer_lag"
+      ],
+      "data": {
+        "current": 2238.0172
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "frontend-proxy",
+      "score": 0.75,
+      "summary": "frontend-proxy rolled out 2.0.2 \u2192 2.0.3 25m before the alert",
+      "evidence_ids": [
+        "changes:frontend-proxy:deploy:0"
+      ],
+      "data": {
+        "minutes_before_alert": 25.1,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "restarts",
+      "service": "valkey-cart",
+      "score": 0.3,
+      "summary": "pod/valkey-cart-c2d0bd34-fa091 restarted 1\u00d7",
+      "evidence_ids": [
+        "k8s:valkey-cart:pod_status"
+      ],
+      "data": {}
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-06-17",
+      "title": "Accounting consumer lag from a long-running Postgres migration",
+      "type": "postmortem",
+      "services": [
+        "postgresql",
+        "accounting",
+        "product-catalog",
+        "kafka"
+      ],
+      "category": "datastore_degradation",
+      "date": "2026-06-17",
+      "snippet": "## Summary A manual `ALTER TABLE` on `orders` held a lock for 40 minutes. Accounting's inserts slowed from 30ms to ~1s, and its Kafka consumer lag grew past 5,000 messages. Product-catalog reads were also slower. The alert fired on consumer lag. ## Root cause Datastore degradation in postgresql (lock contention). Accounting was healthy but blocked on the database. ## Resolution Cancelled the migra\u2026",
+      "score": 28.459
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 25.352
+    },
+    {
+      "id": "RB-kafka-lag",
+      "title": "Kafka consumer lag growing",
+      "type": "runbook",
+      "services": [
+        "kafka",
+        "accounting",
+        "fraud-detection"
+      ],
+      "category": "queue_backlog",
+      "date": null,
+      "snippet": "1. Is the consumer running? CrashLoopBackOff on the consumer => fix that first. 2. Is the consumer slow because of a dependency (Postgres latency)? Fix the dependency. 3. Is the consumer itself slow per message (kafkaQueueProblems flag, CPU)? Scale consumers up to the partition count. `kubectl -n otel-demo exec deploy/kafka -- /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:90\u2026",
+      "score": 21.471
+    },
+    {
+      "id": "RB-valkey",
+      "title": "Cart / Valkey errors and timeouts",
+      "type": "runbook",
+      "services": [
+        "cart",
+        "valkey-cart"
+      ],
+      "category": "resource_exhaustion",
+      "date": null,
+      "snippet": "Decide whether the problem is the client pool or the server. - Server: `kubectl -n otel-demo exec deploy/valkey-cart -- valkey-cli --latency` and `SLOWLOG GET 10`. High latency or `BUSY` => datastore degradation. - Client: server latency flat but cart logs `pool busy=N/N` or \"timeout awaiting connection\" => pool exhaustion. Raise the pool size and restart cart.",
+      "score": 20.294
+    },
+    {
+      "id": "PM-2026-05-04",
+      "title": "Recommendation OOM loop from an unbounded product cache",
+      "type": "postmortem",
+      "services": [
+        "recommendation",
+        "frontend"
+      ],
+      "category": "memory_leak",
+      "date": "2026-05-04",
+      "snippet": "## Summary Recommendation was OOMKilled every ~7 minutes for two hours. Each restart dropped in-flight requests, so frontend saw periodic bursts of 5xx. Memory grew linearly from ~45% to 100% of the limit between restarts (sawtooth). ## Root cause An in-process cache keyed by product-id list had no eviction. The `recommendationCacheFailure` flag reproduces this. ## Resolution Restarted the deploym\u2026",
+      "score": 11.956
+    }
+  ],
+  "services_examined": [
+    "accounting",
+    "postgresql"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "accounting",
+    "expected_category": "queue_backlog",
+    "predicted_service": "accounting",
+    "predicted_category": "queue_backlog",
+    "confidence": 0.72
+  },
+  "slack_posted": false
+}

@@ -1,0 +1,2724 @@
+{
+  "id": "414cff97da5b",
+  "alert": {
+    "name": "AccountingConsumerLagHigh",
+    "service": "accounting",
+    "severity": "warning",
+    "summary": "accounting consumer lag > 1000 messages",
+    "labels": {
+      "scenario_id": "postgres-slow-accounting-lag"
+    },
+    "starts_at": "2026-09-30T02:50:50.389717Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "postgres-slow-accounting-lag",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:50:50.390292Z",
+  "completed_at": "2026-09-30T02:51:23.978100Z",
+  "duration_ms": 33586,
+  "hypothesis": {
+    "root_cause_service": "postgresql",
+    "category": "datastore_degradation",
+    "title": "postgresql query slowness and CPU saturation blocking accounting consumer",
+    "summary": "PostgreSQL's CPU spiked to 95-100% of limit starting ~18 minutes before the alert, causing query latencies to jump from 4ms to 910ms and triggering statement timeouts. Accounting's Kafka consumer, which writes to PostgreSQL, slowed from 36ms to 968ms per message as its database calls timed out. This caused consumer lag to grow from 12 to 2,863 messages, firing the alert. The root cause is datastore degradation in postgresql, likely from lock contention or an expensive query.",
+    "reasoning": "The alert fired on accounting consumer lag exceeding 1000 messages. Accounting's p95 latency jumped from 36ms to 968ms starting around -15m, and consumer lag grew from ~12 to 2,863 messages. Traces show accounting \u2192 postgresql calls taking 813-919ms with errors \"canceling statement due to statement timeout.\" PostgreSQL's own metrics confirm the problem: p95 latency spiked from 4ms to 910ms at the same time, CPU utilization jumped to 95-100% of limit, and logs show 432 ERROR events and 1,296 slow query warnings (duration ~1700ms) starting -18m. The payment deployment at -35m is a red herring\u2014payment is not on the accounting \u2192 postgresql call path, and the timing doesn't match (symptoms started -18m, well after the deploy). PostgreSQL's CPU saturation, slow queries, and statement timeouts all point to datastore degradation. This matches postmortem PM-2026-06-17 where a Postgres lock caused identical symptoms: accounting lag, slow inserts, and statement timeouts. The root cause is postgresql experiencing query slowness and CPU saturation, not accounting itself, which is merely a victim waiting on its database.",
+    "confidence": 0.85,
+    "supporting_evidence": [
+      {
+        "evidence_id": "metrics:postgresql:cpu_utilization",
+        "why_it_matters": "PostgreSQL CPU jumped to 95-100% of limit at -15m, indicating resource saturation that would slow all queries."
+      },
+      {
+        "evidence_id": "metrics:postgresql:p95_latency_ms",
+        "why_it_matters": "PostgreSQL p95 latency spiked from 4ms to 910ms at the same time, confirming the database itself is slow, not just accounting's view of it."
+      },
+      {
+        "evidence_id": "logs:postgresql:1",
+        "why_it_matters": "432 statement timeout errors in PostgreSQL logs show queries are exceeding their timeout threshold due to slowness."
+      },
+      {
+        "evidence_id": "logs:postgresql:2",
+        "why_it_matters": "1,296 slow query warnings (1700ms duration) confirm PostgreSQL is executing queries much slower than normal."
+      },
+      {
+        "evidence_id": "traces:accounting:447fc935f9e3",
+        "why_it_matters": "Failing trace shows accounting spent 813ms waiting on postgresql, which returned a statement timeout error, proving the bottleneck is in the database."
+      },
+      {
+        "evidence_id": "metrics:accounting:consumer_lag",
+        "why_it_matters": "Accounting consumer lag grew from 12 to 2,863 messages as a direct consequence of slow PostgreSQL writes, not an intrinsic accounting problem."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Identify blocking queries and locks in PostgreSQL",
+        "command": "kubectl -n otel-demo exec deploy/postgresql -- psql -U root -d otel -c \"SELECT pid, now()-query_start AS age, state, query FROM pg_stat_activity WHERE state<>'idle' ORDER BY age DESC LIMIT 10\"",
+        "risk": "low",
+        "rationale": "Check for long-running queries or locks that might be blocking accounting's inserts. This is the safest diagnostic step from runbook RB-postgres."
+      },
+      {
+        "title": "Check for blocking locks",
+        "command": "kubectl -n otel-demo exec deploy/postgresql -- psql -U root -d otel -c \"SELECT locktype, relation::regclass, mode, granted, pid FROM pg_locks WHERE NOT granted\"",
+        "risk": "low",
+        "rationale": "Identify any locks that are not granted, which could indicate lock contention similar to PM-2026-06-17."
+      },
+      {
+        "title": "Cancel the slowest query if identified",
+        "command": "kubectl -n otel-demo exec deploy/postgresql -- psql -U root -d otel -c \"SELECT pg_cancel_backend(<pid>)\"",
+        "risk": "medium",
+        "rationale": "If a single long-running query or migration is blocking others, canceling it will immediately restore throughput. Replace <pid> with the offending process ID from the first query."
+      }
+    ],
+    "related_documents": [
+      "PM-2026-06-17",
+      "RB-postgres",
+      "RB-kafka-lag"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "postgresql",
+        "category": "cpu_saturation",
+        "why_less_likely": "While PostgreSQL CPU is at 95-100%, the mechanism is more specifically datastore degradation (slow queries, statement timeouts, likely lock contention) rather than pure CPU throttling. The pattern matches PM-2026-06-17's lock contention scenario."
+      },
+      {
+        "root_cause_service": "accounting",
+        "category": "queue_backlog",
+        "why_less_likely": "Accounting's own CPU and memory are stable (~11% and 40%), and traces clearly show the time is spent waiting on postgresql (813ms of 919ms). The consumer is slow because its dependency is slow, not because of an intrinsic problem in accounting."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:payment:deploy:0",
+      "source": "changes",
+      "service": "payment",
+      "title": "deployment/payment rolled out 2.0.2 \u2192 2.0.3 (35m before alert)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/payment",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 35.2
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:kafka:Rebalance:0",
+      "source": "k8s_events",
+      "service": "kafka",
+      "title": "Rebalance \u00d71 on pod/kafka-d1d17798-26b9f",
+      "detail": "consumer group accounting rebalanced",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "Rebalance",
+        "object": "pod/kafka-d1d17798-26b9f",
+        "count": 1,
+        "message": "consumer group accounting rebalanced",
+        "first_seen_min": -25.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:shipping:pod_status",
+      "source": "k8s_events",
+      "service": "shipping",
+      "title": "pod/shipping-61e492b4-127b4 restarts=1, last terminated: Error (exit code 137)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/shipping-61e492b4-127b4",
+        "phase": "Running",
+        "restarts": 1,
+        "last_termination_reason": "Error (exit code 137)",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:accounting:1",
+      "source": "logs",
+      "service": "accounting",
+      "title": "96\u00d7 WARN request to postgresql took 904ms",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "request to postgresql took 904ms",
+        "level": "WARN",
+        "count": 96,
+        "sample": "request to postgresql took 904ms",
+        "first_seen_min": -10
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:postgresql:1",
+      "source": "logs",
+      "service": "postgresql",
+      "title": "432\u00d7 ERROR canceling statement due to statement timeout",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "canceling statement due to statement timeout",
+        "level": "ERROR",
+        "count": 432,
+        "sample": "canceling statement due to statement timeout (trace_id=\u2026)",
+        "first_seen_min": -18.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:postgresql:2",
+      "source": "logs",
+      "service": "postgresql",
+      "title": "1,296\u00d7 WARN slow query: duration 1700 ms",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "slow query: duration 1700 ms",
+        "level": "WARN",
+        "count": 1296,
+        "sample": "slow query: duration 1700 ms",
+        "first_seen_min": -18.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:consumer_lag",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting consumer lag: 12 \u2192 2,863",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "consumer_lag",
+        "unit": "messages",
+        "series": [
+          [
+            -45,
+            12.9559
+          ],
+          [
+            -44,
+            11.8518
+          ],
+          [
+            -43,
+            11.5866
+          ],
+          [
+            -42,
+            12.0543
+          ],
+          [
+            -41,
+            12.4348
+          ],
+          [
+            -40,
+            11.7314
+          ],
+          [
+            -39,
+            11.8422
+          ],
+          [
+            -38,
+            11.2187
+          ],
+          [
+            -37,
+            11.8787
+          ],
+          [
+            -36,
+            12.0549
+          ],
+          [
+            -35,
+            11.5854
+          ],
+          [
+            -34,
+            11.7276
+          ],
+          [
+            -33,
+            10.5195
+          ],
+          [
+            -32,
+            12.2131
+          ],
+          [
+            -31,
+            12.4009
+          ],
+          [
+            -30,
+            11.7008
+          ],
+          [
+            -29,
+            11.5659
+          ],
+          [
+            -28,
+            11.7591
+          ],
+          [
+            -27,
+            11.6683
+          ],
+          [
+            -26,
+            11.8284
+          ],
+          [
+            -25,
+            12.2111
+          ],
+          [
+            -24,
+            12.7847
+          ],
+          [
+            -23,
+            12.5251
+          ],
+          [
+            -22,
+            13.0387
+          ],
+          [
+            -21,
+            11.5717
+          ],
+          [
+            -20,
+            13.0014
+          ],
+          [
+            -19,
+            11.5525
+          ],
+          [
+            -18,
+            12.1961
+          ],
+          [
+            -17,
+            180.0209
+          ],
+          [
+            -16,
+            362.7833
+          ],
+          [
+            -15,
+            552.5442
+          ],
+          [
+            -14,
+            677.9793
+          ],
+          [
+            -13,
+            950.5295
+          ],
+          [
+            -12,
+            1064.032
+          ],
+          [
+            -11,
+            1243.3962
+          ],
+          [
+            -10,
+            1567.7959
+          ],
+          [
+            -9,
+            1604.8925
+          ],
+          [
+            -8,
+            1791.6505
+          ],
+          [
+            -7,
+            1998.5081
+          ],
+          [
+            -6,
+            2396.4172
+          ],
+          [
+            -5,
+            2343.9807
+          ],
+          [
+            -4,
+            2489.0976
+          ],
+          [
+            -3,
+            2790.8769
+          ],
+          [
+            -2,
+            2936.4093
+          ],
+          [
+            -1,
+            3197.3226
+          ],
+          [
+            0,
+            3423.2447
+          ]
+        ],
+        "baseline": 11.8518,
+        "current": 2863.4886,
+        "peak": 3423.2447
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:cpu_utilization",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting cpu utilization: 11.2% \u2192 10.8% (peak 12.0%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1118
+          ],
+          [
+            -44,
+            0.1154
+          ],
+          [
+            -43,
+            0.1102
+          ],
+          [
+            -42,
+            0.1101
+          ],
+          [
+            -41,
+            0.1033
+          ],
+          [
+            -40,
+            0.1133
+          ],
+          [
+            -39,
+            0.1143
+          ],
+          [
+            -38,
+            0.1161
+          ],
+          [
+            -37,
+            0.1077
+          ],
+          [
+            -36,
+            0.1098
+          ],
+          [
+            -35,
+            0.113
+          ],
+          [
+            -34,
+            0.106
+          ],
+          [
+            -33,
+            0.1136
+          ],
+          [
+            -32,
+            0.1041
+          ],
+          [
+            -31,
+            0.1202
+          ],
+          [
+            -30,
+            0.1025
+          ],
+          [
+            -29,
+            0.1062
+          ],
+          [
+            -28,
+            0.1071
+          ],
+          [
+            -27,
+            0.1087
+          ],
+          [
+            -26,
+            0.1109
+          ],
+          [
+            -25,
+            0.1096
+          ],
+          [
+            -24,
+            0.1183
+          ],
+          [
+            -23,
+            0.1116
+          ],
+          [
+            -22,
+            0.1085
+          ],
+          [
+            -21,
+            0.1077
+          ],
+          [
+            -20,
+            0.1125
+          ],
+          [
+            -19,
+            0.1092
+          ],
+          [
+            -18,
+            0.1007
+          ],
+          [
+            -17,
+            0.1177
+          ],
+          [
+            -16,
+            0.1133
+          ],
+          [
+            -15,
+            0.1007
+          ],
+          [
+            -14,
+            0.1118
+          ],
+          [
+            -13,
+            0.1069
+          ],
+          [
+            -12,
+            0.1106
+          ],
+          [
+            -11,
+            0.1134
+          ],
+          [
+            -10,
+            0.1192
+          ],
+          [
+            -9,
+            0.1129
+          ],
+          [
+            -8,
+            0.0983
+          ],
+          [
+            -7,
+            0.1153
+          ],
+          [
+            -6,
+            0.111
+          ],
+          [
+            -5,
+            0.1101
+          ],
+          [
+            -4,
+            0.1086
+          ],
+          [
+            -3,
+            0.1103
+          ],
+          [
+            -2,
+            0.1037
+          ],
+          [
+            -1,
+            0.106
+          ],
+          [
+            0,
+            0.11
+          ]
+        ],
+        "baseline": 0.1118,
+        "current": 0.1081,
+        "peak": 0.1202
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:error_rate",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting error rate: 0.4% \u2192 1.1%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0046
+          ],
+          [
+            -44,
+            0.0032
+          ],
+          [
+            -43,
+            0.0045
+          ],
+          [
+            -42,
+            0.0045
+          ],
+          [
+            -41,
+            0.0036
+          ],
+          [
+            -40,
+            0.004
+          ],
+          [
+            -39,
+            0.0044
+          ],
+          [
+            -38,
+            0.0041
+          ],
+          [
+            -37,
+            0.0028
+          ],
+          [
+            -36,
+            0.0045
+          ],
+          [
+            -35,
+            0.0035
+          ],
+          [
+            -34,
+            0.0035
+          ],
+          [
+            -33,
+            0.0049
+          ],
+          [
+            -32,
+            0.0029
+          ],
+          [
+            -31,
+            0.0037
+          ],
+          [
+            -30,
+            0.0045
+          ],
+          [
+            -29,
+            0.0029
+          ],
+          [
+            -28,
+            0.0041
+          ],
+          [
+            -27,
+            0.0043
+          ],
+          [
+            -26,
+            0.0041
+          ],
+          [
+            -25,
+            0.0044
+          ],
+          [
+            -24,
+            0.0043
+          ],
+          [
+            -23,
+            0.0039
+          ],
+          [
+            -22,
+            0.0024
+          ],
+          [
+            -21,
+            0.0039
+          ],
+          [
+            -20,
+            0.0038
+          ],
+          [
+            -19,
+            0.0039
+          ],
+          [
+            -18,
+            0.0036
+          ],
+          [
+            -17,
+            0.0075
+          ],
+          [
+            -16,
+            0.0134
+          ],
+          [
+            -15,
+            0.0102
+          ],
+          [
+            -14,
+            0.0141
+          ],
+          [
+            -13,
+            0.0121
+          ],
+          [
+            -12,
+            0.0109
+          ],
+          [
+            -11,
+            0.0118
+          ],
+          [
+            -10,
+            0.0122
+          ],
+          [
+            -9,
+            0.0123
+          ],
+          [
+            -8,
+            0.0125
+          ],
+          [
+            -7,
+            0.0133
+          ],
+          [
+            -6,
+            0.0101
+          ],
+          [
+            -5,
+            0.0118
+          ],
+          [
+            -4,
+            0.0112
+          ],
+          [
+            -3,
+            0.0113
+          ],
+          [
+            -2,
+            0.012
+          ],
+          [
+            -1,
+            0.0098
+          ],
+          [
+            0,
+            0.0128
+          ]
+        ],
+        "baseline": 0.0041,
+        "current": 0.0115,
+        "peak": 0.0141
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:memory_utilization",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting memory utilization: 39.8% \u2192 40.0% (peak 41.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3958
+          ],
+          [
+            -44,
+            0.4052
+          ],
+          [
+            -43,
+            0.3977
+          ],
+          [
+            -42,
+            0.3984
+          ],
+          [
+            -41,
+            0.4125
+          ],
+          [
+            -40,
+            0.3882
+          ],
+          [
+            -39,
+            0.3908
+          ],
+          [
+            -38,
+            0.3988
+          ],
+          [
+            -37,
+            0.4123
+          ],
+          [
+            -36,
+            0.3963
+          ],
+          [
+            -35,
+            0.395
+          ],
+          [
+            -34,
+            0.4047
+          ],
+          [
+            -33,
+            0.4036
+          ],
+          [
+            -32,
+            0.4193
+          ],
+          [
+            -31,
+            0.4095
+          ],
+          [
+            -30,
+            0.3988
+          ],
+          [
+            -29,
+            0.3963
+          ],
+          [
+            -28,
+            0.4047
+          ],
+          [
+            -27,
+            0.402
+          ],
+          [
+            -26,
+            0.4172
+          ],
+          [
+            -25,
+            0.3971
+          ],
+          [
+            -24,
+            0.4069
+          ],
+          [
+            -23,
+            0.3931
+          ],
+          [
+            -22,
+            0.3922
+          ],
+          [
+            -21,
+            0.4039
+          ],
+          [
+            -20,
+            0.4045
+          ],
+          [
+            -19,
+            0.41
+          ],
+          [
+            -18,
+            0.3988
+          ],
+          [
+            -17,
+            0.4175
+          ],
+          [
+            -16,
+            0.4035
+          ],
+          [
+            -15,
+            0.4089
+          ],
+          [
+            -14,
+            0.3876
+          ],
+          [
+            -13,
+            0.3869
+          ],
+          [
+            -12,
+            0.3844
+          ],
+          [
+            -11,
+            0.3951
+          ],
+          [
+            -10,
+            0.4011
+          ],
+          [
+            -9,
+            0.4089
+          ],
+          [
+            -8,
+            0.3976
+          ],
+          [
+            -7,
+            0.3997
+          ],
+          [
+            -6,
+            0.4077
+          ],
+          [
+            -5,
+            0.3917
+          ],
+          [
+            -4,
+            0.4116
+          ],
+          [
+            -3,
+            0.3946
+          ],
+          [
+            -2,
+            0.388
+          ],
+          [
+            -1,
+            0.4088
+          ],
+          [
+            0,
+            0.4057
+          ]
+        ],
+        "baseline": 0.3977,
+        "current": 0.4001,
+        "peak": 0.4193
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:p95_latency_ms",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting p95 latency ms: 36ms \u2192 968ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            38.6564
+          ],
+          [
+            -44,
+            34.9784
+          ],
+          [
+            -43,
+            37.1734
+          ],
+          [
+            -42,
+            37.971
+          ],
+          [
+            -41,
+            29.015
+          ],
+          [
+            -40,
+            35.4012
+          ],
+          [
+            -39,
+            35.9831
+          ],
+          [
+            -38,
+            36.1058
+          ],
+          [
+            -37,
+            32.6185
+          ],
+          [
+            -36,
+            35.3258
+          ],
+          [
+            -35,
+            36.3058
+          ],
+          [
+            -34,
+            35.1408
+          ],
+          [
+            -33,
+            35.7332
+          ],
+          [
+            -32,
+            36.0354
+          ],
+          [
+            -31,
+            34.8611
+          ],
+          [
+            -30,
+            33.1631
+          ],
+          [
+            -29,
+            36.3573
+          ],
+          [
+            -28,
+            34.2933
+          ],
+          [
+            -27,
+            35.0915
+          ],
+          [
+            -26,
+            35.2218
+          ],
+          [
+            -25,
+            36.6783
+          ],
+          [
+            -24,
+            36.2325
+          ],
+          [
+            -23,
+            36.7195
+          ],
+          [
+            -22,
+            34.731
+          ],
+          [
+            -21,
+            34.4433
+          ],
+          [
+            -20,
+            37.2
+          ],
+          [
+            -19,
+            37.5399
+          ],
+          [
+            -18,
+            38.899
+          ],
+          [
+            -17,
+            549.372
+          ],
+          [
+            -16,
+            941.1624
+          ],
+          [
+            -15,
+            998.1188
+          ],
+          [
+            -14,
+            962.0909
+          ],
+          [
+            -13,
+            903.3265
+          ],
+          [
+            -12,
+            860.5996
+          ],
+          [
+            -11,
+            876.9375
+          ],
+          [
+            -10,
+            895.6291
+          ],
+          [
+            -9,
+            946.4386
+          ],
+          [
+            -8,
+            962.0798
+          ],
+          [
+            -7,
+            919.0465
+          ],
+          [
+            -6,
+            959.4035
+          ],
+          [
+            -5,
+            948.3641
+          ],
+          [
+            -4,
+            958.0066
+          ],
+          [
+            -3,
+            960.2662
+          ],
+          [
+            -2,
+            898.0634
+          ],
+          [
+            -1,
+            1016.8419
+          ],
+          [
+            0,
+            1027.6428
+          ]
+        ],
+        "baseline": 35.9831,
+        "current": 968.1975,
+        "peak": 1027.6428
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:accounting:request_rate",
+      "source": "metrics",
+      "service": "accounting",
+      "title": "accounting request rate: 3.2 req/s \u2192 3.2 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            3.0421
+          ],
+          [
+            -44,
+            3.2119
+          ],
+          [
+            -43,
+            3.0962
+          ],
+          [
+            -42,
+            3.3963
+          ],
+          [
+            -41,
+            3.2549
+          ],
+          [
+            -40,
+            3.3184
+          ],
+          [
+            -39,
+            3.1773
+          ],
+          [
+            -38,
+            3.3965
+          ],
+          [
+            -37,
+            3.2817
+          ],
+          [
+            -36,
+            3.2333
+          ],
+          [
+            -35,
+            3.1135
+          ],
+          [
+            -34,
+            3.1999
+          ],
+          [
+            -33,
+            3.0816
+          ],
+          [
+            -32,
+            3.5144
+          ],
+          [
+            -31,
+            3.3116
+          ],
+          [
+            -30,
+            2.9989
+          ],
+          [
+            -29,
+            3.4841
+          ],
+          [
+            -28,
+            3.2985
+          ],
+          [
+            -27,
+            3.3036
+          ],
+          [
+            -26,
+            2.9932
+          ],
+          [
+            -25,
+            3.5735
+          ],
+          [
+            -24,
+            3.4762
+          ],
+          [
+            -23,
+            2.9736
+          ],
+          [
+            -22,
+            2.8923
+          ],
+          [
+            -21,
+            3.2152
+          ],
+          [
+            -20,
+            3.2387
+          ],
+          [
+            -19,
+            3.4276
+          ],
+          [
+            -18,
+            3.0084
+          ],
+          [
+            -17,
+            3.177
+          ],
+          [
+            -16,
+            3.07
+          ],
+          [
+            -15,
+            3.1863
+          ],
+          [
+            -14,
+            3.1697
+          ],
+          [
+            -13,
+            3.165
+          ],
+          [
+            -12,
+            3.1648
+          ],
+          [
+            -11,
+            2.9661
+          ],
+          [
+            -10,
+            3.2834
+          ],
+          [
+            -9,
+            2.9072
+          ],
+          [
+            -8,
+            3.4638
+          ],
+          [
+            -7,
+            3.3005
+          ],
+          [
+            -6,
+            3.2447
+          ],
+          [
+            -5,
+            3.4675
+          ],
+          [
+            -4,
+            3.0617
+          ],
+          [
+            -3,
+            3.4026
+          ],
+          [
+            -2,
+            3.0203
+          ],
+          [
+            -1,
+            3.3194
+          ],
+          [
+            0,
+            3.0296
+          ]
+        ],
+        "baseline": 3.2333,
+        "current": 3.2168,
+        "peak": 3.5735
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:cpu_utilization",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql cpu utilization: 11.8% \u2192 94.8% (peak 100.0%)",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1185
+          ],
+          [
+            -44,
+            0.1135
+          ],
+          [
+            -43,
+            0.1205
+          ],
+          [
+            -42,
+            0.1168
+          ],
+          [
+            -41,
+            0.1198
+          ],
+          [
+            -40,
+            0.1082
+          ],
+          [
+            -39,
+            0.1179
+          ],
+          [
+            -38,
+            0.1188
+          ],
+          [
+            -37,
+            0.1119
+          ],
+          [
+            -36,
+            0.1142
+          ],
+          [
+            -35,
+            0.1216
+          ],
+          [
+            -34,
+            0.1262
+          ],
+          [
+            -33,
+            0.1128
+          ],
+          [
+            -32,
+            0.1251
+          ],
+          [
+            -31,
+            0.1271
+          ],
+          [
+            -30,
+            0.1249
+          ],
+          [
+            -29,
+            0.1164
+          ],
+          [
+            -28,
+            0.1306
+          ],
+          [
+            -27,
+            0.1222
+          ],
+          [
+            -26,
+            0.1136
+          ],
+          [
+            -25,
+            0.1151
+          ],
+          [
+            -24,
+            0.1171
+          ],
+          [
+            -23,
+            0.1208
+          ],
+          [
+            -22,
+            0.1308
+          ],
+          [
+            -21,
+            0.12
+          ],
+          [
+            -20,
+            0.1183
+          ],
+          [
+            -19,
+            0.1075
+          ],
+          [
+            -18,
+            0.1231
+          ],
+          [
+            -17,
+            0.5016
+          ],
+          [
+            -16,
+            0.8789
+          ],
+          [
+            -15,
+            0.9592
+          ],
+          [
+            -14,
+            0.8577
+          ],
+          [
+            -13,
+            0.9269
+          ],
+          [
+            -12,
+            0.872
+          ],
+          [
+            -11,
+            0.8949
+          ],
+          [
+            -10,
+            0.8807
+          ],
+          [
+            -9,
+            0.9599
+          ],
+          [
+            -8,
+            0.906
+          ],
+          [
+            -7,
+            0.959
+          ],
+          [
+            -6,
+            1.0
+          ],
+          [
+            -5,
+            1.0
+          ],
+          [
+            -4,
+            0.8945
+          ],
+          [
+            -3,
+            0.9899
+          ],
+          [
+            -2,
+            0.9498
+          ],
+          [
+            -1,
+            0.992
+          ],
+          [
+            0,
+            0.863
+          ]
+        ],
+        "baseline": 0.1179,
+        "current": 0.9482,
+        "peak": 1.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:error_rate",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql error rate: 0.4% \u2192 1.5%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0034
+          ],
+          [
+            -44,
+            0.0045
+          ],
+          [
+            -43,
+            0.0033
+          ],
+          [
+            -42,
+            0.0037
+          ],
+          [
+            -41,
+            0.0039
+          ],
+          [
+            -40,
+            0.0036
+          ],
+          [
+            -39,
+            0.0034
+          ],
+          [
+            -38,
+            0.0044
+          ],
+          [
+            -37,
+            0.0035
+          ],
+          [
+            -36,
+            0.0055
+          ],
+          [
+            -35,
+            0.0031
+          ],
+          [
+            -34,
+            0.0037
+          ],
+          [
+            -33,
+            0.0037
+          ],
+          [
+            -32,
+            0.0024
+          ],
+          [
+            -31,
+            0.0045
+          ],
+          [
+            -30,
+            0.0039
+          ],
+          [
+            -29,
+            0.0041
+          ],
+          [
+            -28,
+            0.0049
+          ],
+          [
+            -27,
+            0.0044
+          ],
+          [
+            -26,
+            0.0045
+          ],
+          [
+            -25,
+            0.0042
+          ],
+          [
+            -24,
+            0.0038
+          ],
+          [
+            -23,
+            0.0033
+          ],
+          [
+            -22,
+            0.0049
+          ],
+          [
+            -21,
+            0.0038
+          ],
+          [
+            -20,
+            0.0047
+          ],
+          [
+            -19,
+            0.0036
+          ],
+          [
+            -18,
+            0.0044
+          ],
+          [
+            -17,
+            0.0095
+          ],
+          [
+            -16,
+            0.0149
+          ],
+          [
+            -15,
+            0.0128
+          ],
+          [
+            -14,
+            0.0147
+          ],
+          [
+            -13,
+            0.0158
+          ],
+          [
+            -12,
+            0.013
+          ],
+          [
+            -11,
+            0.0095
+          ],
+          [
+            -10,
+            0.0145
+          ],
+          [
+            -9,
+            0.0129
+          ],
+          [
+            -8,
+            0.0138
+          ],
+          [
+            -7,
+            0.0132
+          ],
+          [
+            -6,
+            0.0158
+          ],
+          [
+            -5,
+            0.0167
+          ],
+          [
+            -4,
+            0.0141
+          ],
+          [
+            -3,
+            0.0163
+          ],
+          [
+            -2,
+            0.0129
+          ],
+          [
+            -1,
+            0.0156
+          ],
+          [
+            0,
+            0.0119
+          ]
+        ],
+        "baseline": 0.0036,
+        "current": 0.0146,
+        "peak": 0.0167
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:memory_utilization",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql memory utilization: 45.0% \u2192 44.5% (peak 46.8%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.4496
+          ],
+          [
+            -44,
+            0.4396
+          ],
+          [
+            -43,
+            0.4497
+          ],
+          [
+            -42,
+            0.4463
+          ],
+          [
+            -41,
+            0.4469
+          ],
+          [
+            -40,
+            0.4541
+          ],
+          [
+            -39,
+            0.4543
+          ],
+          [
+            -38,
+            0.4491
+          ],
+          [
+            -37,
+            0.4514
+          ],
+          [
+            -36,
+            0.4648
+          ],
+          [
+            -35,
+            0.4683
+          ],
+          [
+            -34,
+            0.45
+          ],
+          [
+            -33,
+            0.4501
+          ],
+          [
+            -32,
+            0.4678
+          ],
+          [
+            -31,
+            0.4432
+          ],
+          [
+            -30,
+            0.46
+          ],
+          [
+            -29,
+            0.4401
+          ],
+          [
+            -28,
+            0.4476
+          ],
+          [
+            -27,
+            0.4526
+          ],
+          [
+            -26,
+            0.457
+          ],
+          [
+            -25,
+            0.4438
+          ],
+          [
+            -24,
+            0.4376
+          ],
+          [
+            -23,
+            0.4482
+          ],
+          [
+            -22,
+            0.4633
+          ],
+          [
+            -21,
+            0.4502
+          ],
+          [
+            -20,
+            0.4481
+          ],
+          [
+            -19,
+            0.4592
+          ],
+          [
+            -18,
+            0.4496
+          ],
+          [
+            -17,
+            0.4637
+          ],
+          [
+            -16,
+            0.4614
+          ],
+          [
+            -15,
+            0.4477
+          ],
+          [
+            -14,
+            0.4507
+          ],
+          [
+            -13,
+            0.4459
+          ],
+          [
+            -12,
+            0.4534
+          ],
+          [
+            -11,
+            0.4511
+          ],
+          [
+            -10,
+            0.4408
+          ],
+          [
+            -9,
+            0.4434
+          ],
+          [
+            -8,
+            0.4561
+          ],
+          [
+            -7,
+            0.4591
+          ],
+          [
+            -6,
+            0.4402
+          ],
+          [
+            -5,
+            0.4389
+          ],
+          [
+            -4,
+            0.4475
+          ],
+          [
+            -3,
+            0.4536
+          ],
+          [
+            -2,
+            0.4494
+          ],
+          [
+            -1,
+            0.4307
+          ],
+          [
+            0,
+            0.4493
+          ]
+        ],
+        "baseline": 0.4497,
+        "current": 0.4449,
+        "peak": 0.4683
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:p95_latency_ms",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql p95 latency ms: 4ms \u2192 910ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            3.6042
+          ],
+          [
+            -44,
+            3.7319
+          ],
+          [
+            -43,
+            3.879
+          ],
+          [
+            -42,
+            3.8407
+          ],
+          [
+            -41,
+            3.9774
+          ],
+          [
+            -40,
+            3.9687
+          ],
+          [
+            -39,
+            3.8981
+          ],
+          [
+            -38,
+            3.6149
+          ],
+          [
+            -37,
+            3.6593
+          ],
+          [
+            -36,
+            3.6955
+          ],
+          [
+            -35,
+            4.0081
+          ],
+          [
+            -34,
+            3.6439
+          ],
+          [
+            -33,
+            4.3394
+          ],
+          [
+            -32,
+            4.6571
+          ],
+          [
+            -31,
+            4.5104
+          ],
+          [
+            -30,
+            3.7169
+          ],
+          [
+            -29,
+            3.9366
+          ],
+          [
+            -28,
+            4.3439
+          ],
+          [
+            -27,
+            3.8145
+          ],
+          [
+            -26,
+            4.3006
+          ],
+          [
+            -25,
+            3.8436
+          ],
+          [
+            -24,
+            4.3039
+          ],
+          [
+            -23,
+            4.064
+          ],
+          [
+            -22,
+            3.9508
+          ],
+          [
+            -21,
+            3.8475
+          ],
+          [
+            -20,
+            4.0123
+          ],
+          [
+            -19,
+            3.847
+          ],
+          [
+            -18,
+            4.4307
+          ],
+          [
+            -17,
+            430.034
+          ],
+          [
+            -16,
+            886.1838
+          ],
+          [
+            -15,
+            905.4192
+          ],
+          [
+            -14,
+            940.3165
+          ],
+          [
+            -13,
+            901.293
+          ],
+          [
+            -12,
+            824.468
+          ],
+          [
+            -11,
+            754.5599
+          ],
+          [
+            -10,
+            974.0779
+          ],
+          [
+            -9,
+            774.6819
+          ],
+          [
+            -8,
+            971.1398
+          ],
+          [
+            -7,
+            875.5967
+          ],
+          [
+            -6,
+            904.3788
+          ],
+          [
+            -5,
+            914.3696
+          ],
+          [
+            -4,
+            829.6874
+          ],
+          [
+            -3,
+            887.8844
+          ],
+          [
+            -2,
+            1067.3037
+          ],
+          [
+            -1,
+            858.1121
+          ],
+          [
+            0,
+            900.1042
+          ]
+        ],
+        "baseline": 3.8407,
+        "current": 909.5769,
+        "peak": 1067.3037
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:request_rate",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql request rate: 39.5 req/s \u2192 40.4 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            39.2616
+          ],
+          [
+            -44,
+            37.6246
+          ],
+          [
+            -43,
+            41.2295
+          ],
+          [
+            -42,
+            42.0017
+          ],
+          [
+            -41,
+            42.8208
+          ],
+          [
+            -40,
+            39.4096
+          ],
+          [
+            -39,
+            37.2096
+          ],
+          [
+            -38,
+            41.0278
+          ],
+          [
+            -37,
+            37.6831
+          ],
+          [
+            -36,
+            43.9571
+          ],
+          [
+            -35,
+            39.5467
+          ],
+          [
+            -34,
+            41.173
+          ],
+          [
+            -33,
+            41.5856
+          ],
+          [
+            -32,
+            41.6778
+          ],
+          [
+            -31,
+            38.036
+          ],
+          [
+            -30,
+            41.8832
+          ],
+          [
+            -29,
+            36.3849
+          ],
+          [
+            -28,
+            39.4905
+          ],
+          [
+            -27,
+            37.9604
+          ],
+          [
+            -26,
+            37.7843
+          ],
+          [
+            -25,
+            36.5926
+          ],
+          [
+            -24,
+            36.701
+          ],
+          [
+            -23,
+            37.9997
+          ],
+          [
+            -22,
+            42.8523
+          ],
+          [
+            -21,
+            38.5615
+          ],
+          [
+            -20,
+            37.8786
+          ],
+          [
+            -19,
+            39.428
+          ],
+          [
+            -18,
+            40.3969
+          ],
+          [
+            -17,
+            39.1447
+          ],
+          [
+            -16,
+            38.9351
+          ],
+          [
+            -15,
+            40.1337
+          ],
+          [
+            -14,
+            40.8063
+          ],
+          [
+            -13,
+            40.1451
+          ],
+          [
+            -12,
+            36.5271
+          ],
+          [
+            -11,
+            40.3645
+          ],
+          [
+            -10,
+            38.6816
+          ],
+          [
+            -9,
+            39.8344
+          ],
+          [
+            -8,
+            41.2387
+          ],
+          [
+            -7,
+            36.4472
+          ],
+          [
+            -6,
+            38.5494
+          ],
+          [
+            -5,
+            44.7213
+          ],
+          [
+            -4,
+            36.8736
+          ],
+          [
+            -3,
+            42.4997
+          ],
+          [
+            -2,
+            38.3302
+          ],
+          [
+            -1,
+            40.7538
+          ],
+          [
+            0,
+            39.228
+          ]
+        ],
+        "baseline": 39.5467,
+        "current": 40.4011,
+        "peak": 44.7213
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:accounting:447fc935f9e3",
+      "source": "traces",
+      "service": "postgresql",
+      "title": "Failing trace 447fc935f9e3: accounting \u2192 postgresql",
+      "detail": "canceling statement due to statement timeout",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "447fc935f9e3664d09881013068b7af0",
+        "spans": [
+          {
+            "service": "accounting",
+            "operation": "accounting/handle",
+            "duration_ms": 919.0,
+            "error": true,
+            "message": "rpc error calling postgresql: code = Internal",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "postgresql",
+            "operation": "postgresql/handle",
+            "duration_ms": 813.0,
+            "error": true,
+            "message": "canceling statement due to statement timeout",
+            "depth": 1,
+            "kind": "server"
+          }
+        ],
+        "origin": "postgresql"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:accounting:summary",
+      "source": "traces",
+      "service": "accounting",
+      "title": "3/200 sampled accounting traces failed in the last 5m; top error origin: postgresql",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 3,
+        "error_origins": {
+          "postgresql": 3
+        },
+        "latency_contributors_ms": {
+          "postgresql": 900.0
+        },
+        "p95_ms": 935.0
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_latency_origin",
+      "service": "postgresql",
+      "score": 3.0,
+      "summary": "postgresql accounts for 100% of added latency in accounting traces (+900ms)",
+      "evidence_ids": [
+        "traces:accounting:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 900.0
+      }
+    },
+    {
+      "kind": "cpu_saturation",
+      "service": "postgresql",
+      "score": 2.0,
+      "summary": "postgresql CPU at 95% of limit",
+      "evidence_ids": [
+        "metrics:postgresql:cpu_utilization"
+      ],
+      "data": {
+        "current": 0.9482
+      }
+    },
+    {
+      "kind": "slow_queries",
+      "service": "postgresql",
+      "score": 1.5,
+      "summary": "postgresql: canceling statement due to statement timeout",
+      "evidence_ids": [
+        "logs:postgresql:1"
+      ],
+      "data": {
+        "count": 432
+      }
+    },
+    {
+      "kind": "slow_queries",
+      "service": "postgresql",
+      "score": 1.5,
+      "summary": "postgresql: slow query: duration 1700 ms",
+      "evidence_ids": [
+        "logs:postgresql:2"
+      ],
+      "data": {
+        "count": 1296
+      }
+    },
+    {
+      "kind": "error_logs",
+      "service": "postgresql",
+      "score": 1.0,
+      "summary": "432\u00d7 ERROR in postgresql: canceling statement due to statement timeout",
+      "evidence_ids": [
+        "logs:postgresql:1"
+      ],
+      "data": {
+        "count": 432,
+        "message": "canceling statement due to statement timeout"
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "accounting",
+      "score": 0.8,
+      "summary": "accounting p95 36ms \u2192 968ms",
+      "evidence_ids": [
+        "metrics:accounting:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 35.9831,
+        "current": 968.1975
+      }
+    },
+    {
+      "kind": "consumer_lag",
+      "service": "accounting",
+      "score": 0.8,
+      "summary": "accounting consumer lag 12 \u2192 2,863",
+      "evidence_ids": [
+        "metrics:accounting:consumer_lag"
+      ],
+      "data": {
+        "current": 2863.4886
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "postgresql",
+      "score": 0.8,
+      "summary": "postgresql p95 4ms \u2192 910ms",
+      "evidence_ids": [
+        "metrics:postgresql:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 3.8407,
+        "current": 909.5769
+      }
+    },
+    {
+      "kind": "restarts",
+      "service": "shipping",
+      "score": 0.3,
+      "summary": "pod/shipping-61e492b4-127b4 restarted 1\u00d7",
+      "evidence_ids": [
+        "k8s:shipping:pod_status"
+      ],
+      "data": {}
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-06-17",
+      "title": "Accounting consumer lag from a long-running Postgres migration",
+      "type": "postmortem",
+      "services": [
+        "postgresql",
+        "accounting",
+        "product-catalog",
+        "kafka"
+      ],
+      "category": "datastore_degradation",
+      "date": "2026-06-17",
+      "snippet": "## Summary A manual `ALTER TABLE` on `orders` held a lock for 40 minutes. Accounting's inserts slowed from 30ms to ~1s, and its Kafka consumer lag grew past 5,000 messages. Product-catalog reads were also slower. The alert fired on consumer lag. ## Root cause Datastore degradation in postgresql (lock contention). Accounting was healthy but blocked on the database. ## Resolution Cancelled the migra\u2026",
+      "score": 32.583
+    },
+    {
+      "id": "RB-postgres",
+      "title": "Postgres slow queries and lock contention",
+      "type": "runbook",
+      "services": [
+        "postgresql",
+        "accounting",
+        "product-catalog"
+      ],
+      "category": "datastore_degradation",
+      "date": null,
+      "snippet": "1. `kubectl -n otel-demo exec deploy/postgresql -- psql -U root -d otel -c \"SELECT pid, now()-query_start AS age, state, query FROM pg_stat_activity WHERE state<>'idle' ORDER BY age DESC LIMIT 5\"` 2. Blocking locks: `SELECT * FROM pg_locks WHERE NOT granted`. 3. Cancel the offender: `SELECT pg_cancel_backend(<pid>)`. 4. Consumers lagging behind a slow DB recover by themselves once latency drops; d\u2026",
+      "score": 31.901
+    },
+    {
+      "id": "RB-kafka-lag",
+      "title": "Kafka consumer lag growing",
+      "type": "runbook",
+      "services": [
+        "kafka",
+        "accounting",
+        "fraud-detection"
+      ],
+      "category": "queue_backlog",
+      "date": null,
+      "snippet": "1. Is the consumer running? CrashLoopBackOff on the consumer => fix that first. 2. Is the consumer slow because of a dependency (Postgres latency)? Fix the dependency. 3. Is the consumer itself slow per message (kafkaQueueProblems flag, CPU)? Scale consumers up to the partition count. `kubectl -n otel-demo exec deploy/kafka -- /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:90\u2026",
+      "score": 26.318
+    },
+    {
+      "id": "PM-2026-04-22",
+      "title": "Ad service CPU saturation slowed every product page",
+      "type": "postmortem",
+      "services": [
+        "ad",
+        "frontend"
+      ],
+      "category": "cpu_saturation",
+      "date": "2026-04-22",
+      "snippet": "## Summary A regex in ad targeting went quadratic on long keyword lists. Ad CPU sat at 97% of its limit with heavy throttling, p95 rose to 1.5s and frontend page latency breached its SLO. A small share of ad calls hit DEADLINE_EXCEEDED. ## Resolution Scaled ad to 4 replicas, then fixed the regex. ## Lessons - CPU at limit + `CPUThrottlingHigh` + latency on one service with no errors elsewhere = sa\u2026",
+      "score": 13.268
+    },
+    {
+      "id": "PM-2026-07-09",
+      "title": "Shipping failed after a quote address change",
+      "type": "postmortem",
+      "services": [
+        "shipping",
+        "quote",
+        "checkout"
+      ],
+      "category": "config_change",
+      "date": "2026-07-09",
+      "snippet": "## Summary A Helm values change renamed the quote service address. Shipping could not resolve `quote-svc` and 90% of checkouts failed at the shipping step with `dns error`. ## Root cause Configuration change on shipping (QUOTE_ADDR). Quote itself was healthy and idle. ## Resolution Reverted the env var and redeployed shipping. ## Lessons - `no such host` / `dns error` in a caller plus an idle call\u2026",
+      "score": 9.018
+    }
+  ],
+  "services_examined": [
+    "accounting",
+    "postgresql"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "postgresql",
+    "expected_category": "datastore_degradation",
+    "predicted_service": "postgresql",
+    "predicted_category": "datastore_degradation",
+    "confidence": 0.85
+  },
+  "slack_posted": false
+}

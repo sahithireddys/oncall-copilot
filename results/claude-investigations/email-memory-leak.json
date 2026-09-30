@@ -1,0 +1,2537 @@
+{
+  "id": "249b9103f0cf",
+  "alert": {
+    "name": "CheckoutLatencyHigh",
+    "service": "checkout",
+    "severity": "warning",
+    "summary": "checkout p95 latency > 1.5s for 10m",
+    "labels": {
+      "scenario_id": "email-memory-leak"
+    },
+    "starts_at": "2026-09-30T02:49:57.240868Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "email-memory-leak",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:49:57.241194Z",
+  "completed_at": "2026-09-30T02:50:27.345596Z",
+  "duration_ms": 30102,
+  "hypothesis": {
+    "root_cause_service": "email",
+    "category": "memory_leak",
+    "title": "email memory leak causes GC pressure, OOMKills, and checkout latency spike",
+    "summary": "The email service is experiencing a memory leak that started ~33 minutes before the alert. Memory grew from 33% to 93.5%, triggering heap pressure warnings and three OOMKill restarts. Each restart cycle causes email's p95 latency to spike from 59ms to over 1.3s due to GC pressure. Since checkout synchronously calls email for every order, this added 856ms to checkout's p95, breaching the 1.5s SLO.",
+    "reasoning": "The alert fired for checkout latency, but checkout itself shows healthy CPU (17-20%) and memory (41%). The trace analysis shows email accounts for 100% of the added latency (+856ms). Following the evidence to email: pod/email-c9e64536-3d55e has been OOMKilled 3 times, memory utilization climbed from 33% to 93.5% over the alert window, and logs show \"heap usage above 90% after full GC\" starting 33 minutes before the alert, plus fatal memory allocation errors. Email's p95 latency spiked from 59ms to 1.3s, matching the pattern. The payment 2.0.3 deploy happened 23 minutes before the alert, but payment is not on the critical path for the slow traces shown (trace 356ed282af89 shows checkout\u2192email only), and there's no evidence of payment errors or latency. This matches PM-2026-05-04 (recommendation OOM loop): sawtooth memory growth, OOMKills, and latency degradation before each restart. The root cause is a memory leak in email causing GC pressure and eventual OOMKills.",
+    "confidence": 0.85,
+    "supporting_evidence": [
+      {
+        "evidence_id": "k8s:email:pod_status",
+        "why_it_matters": "Email pod has been OOMKilled 3 times, confirming memory exhaustion is causing restarts and service disruption."
+      },
+      {
+        "evidence_id": "metrics:email:memory_utilization",
+        "why_it_matters": "Memory grew from 33% to 93.5% over the alert window, showing a clear leak pattern rather than a one-time spike."
+      },
+      {
+        "evidence_id": "logs:email:1",
+        "why_it_matters": "420 warnings of heap usage above 90% after full GC starting 33m before alert indicate GC pressure is causing latency before OOMKills."
+      },
+      {
+        "evidence_id": "traces:checkout:summary",
+        "why_it_matters": "Email accounts for 100% of the added latency in checkout traces (+856ms), proving email is the origin of checkout's latency problem."
+      },
+      {
+        "evidence_id": "metrics:email:p95_latency_ms",
+        "why_it_matters": "Email p95 latency spiked from 59ms to 1.3s, correlating with memory pressure and explaining the checkout latency increase."
+      },
+      {
+        "evidence_id": "logs:email:2",
+        "why_it_matters": "Fatal memory allocation errors confirm the service is hitting hard memory limits, not just GC pressure."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Restart email deployment to temporarily restore service",
+        "command": "kubectl -n otel-demo rollout restart deployment/email",
+        "risk": "low",
+        "rationale": "This will clear the leaked memory and restore email latency to normal levels, immediately resolving the checkout SLO breach. Based on RB-oom runbook."
+      },
+      {
+        "title": "Increase email memory limit to buy investigation time",
+        "command": "kubectl -n otel-demo set resources deployment/email --limits=memory=512Mi",
+        "risk": "low",
+        "rationale": "If the leak recurs quickly after restart, raising the limit will extend the time before the next OOMKill, allowing more time to identify the leak source."
+      },
+      {
+        "title": "Capture heap dump before next OOMKill for leak analysis",
+        "command": "kubectl -n otel-demo exec -it deployment/email -- jmap -dump:live,format=b,file=/tmp/heap.hprof 1",
+        "risk": "medium",
+        "rationale": "Capture memory state to identify which objects are accumulating. Pattern matches PM-2026-05-04 where an unbounded cache caused the leak."
+      }
+    ],
+    "related_documents": [
+      "PM-2026-05-04",
+      "RB-oom"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "payment",
+        "category": "bad_deploy",
+        "why_less_likely": "Payment 2.0.3 deployed 23m before the alert, but payment does not appear in the slow trace spans (trace 356ed282af89 shows only checkout\u2192email). Payment's own metrics are not shown, and there's no evidence of payment errors or latency. The timing is coincidental."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:checkout:deploy:0",
+      "source": "changes",
+      "service": "checkout",
+      "title": "deployment/checkout rolled out 2.0.1 \u2192 2.0.2 (41m before alert)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/checkout",
+        "from_version": "2.0.1",
+        "to_version": "2.0.2",
+        "minutes_before_alert": 41.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:payment:deploy:1",
+      "source": "changes",
+      "service": "payment",
+      "title": "deployment/payment rolled out 2.0.2 \u2192 2.0.3 (23m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/payment",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 22.9
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:ad:pod_status",
+      "source": "k8s_events",
+      "service": "ad",
+      "title": "pod/ad-4c9fe7cb-bdbb3 restarts=1, last terminated: Error (exit code 137)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/ad-4c9fe7cb-bdbb3",
+        "phase": "Running",
+        "restarts": 1,
+        "last_termination_reason": "Error (exit code 137)",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:email:BackOff:1",
+      "source": "k8s_events",
+      "service": "email",
+      "title": "BackOff \u00d73 on pod/email-c9e64536-3d55e",
+      "detail": "Back-off restarting failed container",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "BackOff",
+        "object": "pod/email-c9e64536-3d55e",
+        "count": 3,
+        "message": "Back-off restarting failed container",
+        "first_seen_min": -26.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:email:pod_status",
+      "source": "k8s_events",
+      "service": "email",
+      "title": "pod/email-c9e64536-3d55e restarts=3, last terminated: OOMKilled",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/email-c9e64536-3d55e",
+        "phase": "Running",
+        "restarts": 3,
+        "last_termination_reason": "OOMKilled",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:checkout:1",
+      "source": "logs",
+      "service": "checkout",
+      "title": "96\u00d7 WARN request to email took 915ms",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "request to email took 915ms",
+        "level": "WARN",
+        "count": 96,
+        "sample": "request to email took 915ms",
+        "first_seen_min": -10
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:email:1",
+      "source": "logs",
+      "service": "email",
+      "title": "420\u00d7 WARN heap usage above 90% after full GC",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "heap usage above 90% after full GC",
+        "level": "WARN",
+        "count": 420,
+        "sample": "heap usage above 90% after full GC",
+        "first_seen_min": -33.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:email:2",
+      "source": "logs",
+      "service": "email",
+      "title": "3\u00d7 ERROR [FATAL] failed to allocate memory (NoMemoryError)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "[FATAL] failed to allocate memory (NoMemoryError)",
+        "level": "ERROR",
+        "count": 3,
+        "sample": "[FATAL] failed to allocate memory (NoMemoryError)",
+        "first_seen_min": -26.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:email:3",
+      "source": "logs",
+      "service": "email",
+      "title": "4\u00d7 WARN template cache refreshed",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "template cache refreshed",
+        "level": "WARN",
+        "count": 4,
+        "sample": "template cache refreshed",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:cpu_utilization",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout cpu utilization: 18.4% \u2192 17.4% (peak 20.7%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1906
+          ],
+          [
+            -44,
+            0.1859
+          ],
+          [
+            -43,
+            0.1783
+          ],
+          [
+            -42,
+            0.1735
+          ],
+          [
+            -41,
+            0.2018
+          ],
+          [
+            -40,
+            0.1947
+          ],
+          [
+            -39,
+            0.1765
+          ],
+          [
+            -38,
+            0.1865
+          ],
+          [
+            -37,
+            0.1845
+          ],
+          [
+            -36,
+            0.1675
+          ],
+          [
+            -35,
+            0.1843
+          ],
+          [
+            -34,
+            0.1926
+          ],
+          [
+            -33,
+            0.1752
+          ],
+          [
+            -32,
+            0.1701
+          ],
+          [
+            -31,
+            0.1868
+          ],
+          [
+            -30,
+            0.1833
+          ],
+          [
+            -29,
+            0.1878
+          ],
+          [
+            -28,
+            0.1738
+          ],
+          [
+            -27,
+            0.1852
+          ],
+          [
+            -26,
+            0.1746
+          ],
+          [
+            -25,
+            0.1843
+          ],
+          [
+            -24,
+            0.1719
+          ],
+          [
+            -23,
+            0.1795
+          ],
+          [
+            -22,
+            0.1657
+          ],
+          [
+            -21,
+            0.1772
+          ],
+          [
+            -20,
+            0.1709
+          ],
+          [
+            -19,
+            0.2068
+          ],
+          [
+            -18,
+            0.1842
+          ],
+          [
+            -17,
+            0.1918
+          ],
+          [
+            -16,
+            0.1887
+          ],
+          [
+            -15,
+            0.1847
+          ],
+          [
+            -14,
+            0.1726
+          ],
+          [
+            -13,
+            0.1887
+          ],
+          [
+            -12,
+            0.1797
+          ],
+          [
+            -11,
+            0.1706
+          ],
+          [
+            -10,
+            0.1704
+          ],
+          [
+            -9,
+            0.1797
+          ],
+          [
+            -8,
+            0.1926
+          ],
+          [
+            -7,
+            0.1934
+          ],
+          [
+            -6,
+            0.1913
+          ],
+          [
+            -5,
+            0.1654
+          ],
+          [
+            -4,
+            0.175
+          ],
+          [
+            -3,
+            0.1892
+          ],
+          [
+            -2,
+            0.1622
+          ],
+          [
+            -1,
+            0.1717
+          ],
+          [
+            0,
+            0.1828
+          ]
+        ],
+        "baseline": 0.1845,
+        "current": 0.1744,
+        "peak": 0.2068
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:error_rate",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0051
+          ],
+          [
+            -44,
+            0.0038
+          ],
+          [
+            -43,
+            0.0041
+          ],
+          [
+            -42,
+            0.0045
+          ],
+          [
+            -41,
+            0.0045
+          ],
+          [
+            -40,
+            0.0038
+          ],
+          [
+            -39,
+            0.0038
+          ],
+          [
+            -38,
+            0.0032
+          ],
+          [
+            -37,
+            0.0041
+          ],
+          [
+            -36,
+            0.0043
+          ],
+          [
+            -35,
+            0.0038
+          ],
+          [
+            -34,
+            0.0041
+          ],
+          [
+            -33,
+            0.0044
+          ],
+          [
+            -32,
+            0.0041
+          ],
+          [
+            -31,
+            0.0029
+          ],
+          [
+            -30,
+            0.0038
+          ],
+          [
+            -29,
+            0.0052
+          ],
+          [
+            -28,
+            0.0044
+          ],
+          [
+            -27,
+            0.0038
+          ],
+          [
+            -26,
+            0.2405
+          ],
+          [
+            -25,
+            0.218
+          ],
+          [
+            -24,
+            0.0038
+          ],
+          [
+            -23,
+            0.0038
+          ],
+          [
+            -22,
+            0.003
+          ],
+          [
+            -21,
+            0.0039
+          ],
+          [
+            -20,
+            0.0033
+          ],
+          [
+            -19,
+            0.0041
+          ],
+          [
+            -18,
+            0.0035
+          ],
+          [
+            -17,
+            0.2131
+          ],
+          [
+            -16,
+            0.247
+          ],
+          [
+            -15,
+            0.0048
+          ],
+          [
+            -14,
+            0.004
+          ],
+          [
+            -13,
+            0.0042
+          ],
+          [
+            -12,
+            0.004
+          ],
+          [
+            -11,
+            0.0036
+          ],
+          [
+            -10,
+            0.0039
+          ],
+          [
+            -9,
+            0.0035
+          ],
+          [
+            -8,
+            0.1796
+          ],
+          [
+            -7,
+            0.2077
+          ],
+          [
+            -6,
+            0.0045
+          ],
+          [
+            -5,
+            0.0032
+          ],
+          [
+            -4,
+            0.0036
+          ],
+          [
+            -3,
+            0.0047
+          ],
+          [
+            -2,
+            0.0029
+          ],
+          [
+            -1,
+            0.0052
+          ],
+          [
+            0,
+            0.0037
+          ]
+        ],
+        "baseline": 0.0041,
+        "current": 0.0039,
+        "peak": 0.247
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:memory_utilization",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout memory utilization: 41.1% \u2192 41.3% (peak 42.5%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3946
+          ],
+          [
+            -44,
+            0.4109
+          ],
+          [
+            -43,
+            0.4157
+          ],
+          [
+            -42,
+            0.4192
+          ],
+          [
+            -41,
+            0.4059
+          ],
+          [
+            -40,
+            0.3981
+          ],
+          [
+            -39,
+            0.4028
+          ],
+          [
+            -38,
+            0.4084
+          ],
+          [
+            -37,
+            0.415
+          ],
+          [
+            -36,
+            0.4183
+          ],
+          [
+            -35,
+            0.4177
+          ],
+          [
+            -34,
+            0.4124
+          ],
+          [
+            -33,
+            0.4141
+          ],
+          [
+            -32,
+            0.4143
+          ],
+          [
+            -31,
+            0.4115
+          ],
+          [
+            -30,
+            0.398
+          ],
+          [
+            -29,
+            0.4071
+          ],
+          [
+            -28,
+            0.4008
+          ],
+          [
+            -27,
+            0.4138
+          ],
+          [
+            -26,
+            0.4007
+          ],
+          [
+            -25,
+            0.4248
+          ],
+          [
+            -24,
+            0.4147
+          ],
+          [
+            -23,
+            0.4187
+          ],
+          [
+            -22,
+            0.4142
+          ],
+          [
+            -21,
+            0.4101
+          ],
+          [
+            -20,
+            0.4116
+          ],
+          [
+            -19,
+            0.4214
+          ],
+          [
+            -18,
+            0.4068
+          ],
+          [
+            -17,
+            0.4122
+          ],
+          [
+            -16,
+            0.3992
+          ],
+          [
+            -15,
+            0.4103
+          ],
+          [
+            -14,
+            0.414
+          ],
+          [
+            -13,
+            0.3952
+          ],
+          [
+            -12,
+            0.4043
+          ],
+          [
+            -11,
+            0.413
+          ],
+          [
+            -10,
+            0.4128
+          ],
+          [
+            -9,
+            0.4139
+          ],
+          [
+            -8,
+            0.3903
+          ],
+          [
+            -7,
+            0.41
+          ],
+          [
+            -6,
+            0.3996
+          ],
+          [
+            -5,
+            0.404
+          ],
+          [
+            -4,
+            0.4105
+          ],
+          [
+            -3,
+            0.4202
+          ],
+          [
+            -2,
+            0.4248
+          ],
+          [
+            -1,
+            0.4077
+          ],
+          [
+            0,
+            0.4121
+          ]
+        ],
+        "baseline": 0.4109,
+        "current": 0.4132,
+        "peak": 0.4248
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:p95_latency_ms",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout p95 latency ms: 326ms \u2192 1170ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            344.1749
+          ],
+          [
+            -44,
+            324.7454
+          ],
+          [
+            -43,
+            309.657
+          ],
+          [
+            -42,
+            335.1823
+          ],
+          [
+            -41,
+            326.0681
+          ],
+          [
+            -40,
+            304.2121
+          ],
+          [
+            -39,
+            294.431
+          ],
+          [
+            -38,
+            338.6339
+          ],
+          [
+            -37,
+            316.8691
+          ],
+          [
+            -36,
+            328.4235
+          ],
+          [
+            -35,
+            336.9746
+          ],
+          [
+            -34,
+            479.5712
+          ],
+          [
+            -33,
+            652.6635
+          ],
+          [
+            -32,
+            854.5389
+          ],
+          [
+            -31,
+            1045.419
+          ],
+          [
+            -30,
+            1210.5704
+          ],
+          [
+            -29,
+            1261.6322
+          ],
+          [
+            -28,
+            1625.7102
+          ],
+          [
+            -27,
+            1545.5333
+          ],
+          [
+            -26,
+            295.189
+          ],
+          [
+            -25,
+            434.3343
+          ],
+          [
+            -24,
+            638.2404
+          ],
+          [
+            -23,
+            808.0127
+          ],
+          [
+            -22,
+            845.497
+          ],
+          [
+            -21,
+            1126.2514
+          ],
+          [
+            -20,
+            1086.8796
+          ],
+          [
+            -19,
+            1450.0293
+          ],
+          [
+            -18,
+            1567.4328
+          ],
+          [
+            -17,
+            291.755
+          ],
+          [
+            -16,
+            477.0994
+          ],
+          [
+            -15,
+            584.8631
+          ],
+          [
+            -14,
+            747.2562
+          ],
+          [
+            -13,
+            933.1261
+          ],
+          [
+            -12,
+            1155.0268
+          ],
+          [
+            -11,
+            1281.8135
+          ],
+          [
+            -10,
+            1522.7802
+          ],
+          [
+            -9,
+            1620.4667
+          ],
+          [
+            -8,
+            316.5019
+          ],
+          [
+            -7,
+            479.5529
+          ],
+          [
+            -6,
+            633.0771
+          ],
+          [
+            -5,
+            780.8495
+          ],
+          [
+            -4,
+            932.6847
+          ],
+          [
+            -3,
+            997.2853
+          ],
+          [
+            -2,
+            1306.036
+          ],
+          [
+            -1,
+            1495.9189
+          ],
+          [
+            0,
+            1509.3448
+          ]
+        ],
+        "baseline": 326.0681,
+        "current": 1170.3532,
+        "peak": 1625.7102
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:request_rate",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout request rate: 3.2 req/s \u2192 3.2 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            3.6407
+          ],
+          [
+            -44,
+            3.2711
+          ],
+          [
+            -43,
+            3.3273
+          ],
+          [
+            -42,
+            3.3392
+          ],
+          [
+            -41,
+            3.0571
+          ],
+          [
+            -40,
+            3.3688
+          ],
+          [
+            -39,
+            3.0198
+          ],
+          [
+            -38,
+            3.0736
+          ],
+          [
+            -37,
+            3.0301
+          ],
+          [
+            -36,
+            3.0065
+          ],
+          [
+            -35,
+            3.2446
+          ],
+          [
+            -34,
+            3.3936
+          ],
+          [
+            -33,
+            3.1816
+          ],
+          [
+            -32,
+            3.3433
+          ],
+          [
+            -31,
+            3.1728
+          ],
+          [
+            -30,
+            3.2426
+          ],
+          [
+            -29,
+            3.1504
+          ],
+          [
+            -28,
+            3.1109
+          ],
+          [
+            -27,
+            3.1265
+          ],
+          [
+            -26,
+            3.2054
+          ],
+          [
+            -25,
+            3.2201
+          ],
+          [
+            -24,
+            3.0157
+          ],
+          [
+            -23,
+            3.3573
+          ],
+          [
+            -22,
+            3.1798
+          ],
+          [
+            -21,
+            3.1434
+          ],
+          [
+            -20,
+            3.1268
+          ],
+          [
+            -19,
+            3.3542
+          ],
+          [
+            -18,
+            3.4708
+          ],
+          [
+            -17,
+            3.3276
+          ],
+          [
+            -16,
+            3.0823
+          ],
+          [
+            -15,
+            3.2478
+          ],
+          [
+            -14,
+            3.3273
+          ],
+          [
+            -13,
+            3.0856
+          ],
+          [
+            -12,
+            3.4291
+          ],
+          [
+            -11,
+            3.1798
+          ],
+          [
+            -10,
+            3.318
+          ],
+          [
+            -9,
+            2.9254
+          ],
+          [
+            -8,
+            3.2703
+          ],
+          [
+            -7,
+            3.5026
+          ],
+          [
+            -6,
+            3.0724
+          ],
+          [
+            -5,
+            3.1504
+          ],
+          [
+            -4,
+            3.1541
+          ],
+          [
+            -3,
+            3.4019
+          ],
+          [
+            -2,
+            3.1855
+          ],
+          [
+            -1,
+            3.3093
+          ],
+          [
+            0,
+            3.2578
+          ]
+        ],
+        "baseline": 3.2446,
+        "current": 3.2432,
+        "peak": 3.6407
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:email:cpu_utilization",
+      "source": "metrics",
+      "service": "email",
+      "title": "email cpu utilization: 6.9% \u2192 28.5% (peak 43.0%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0668
+          ],
+          [
+            -44,
+            0.0629
+          ],
+          [
+            -43,
+            0.0746
+          ],
+          [
+            -42,
+            0.0661
+          ],
+          [
+            -41,
+            0.0687
+          ],
+          [
+            -40,
+            0.0751
+          ],
+          [
+            -39,
+            0.0701
+          ],
+          [
+            -38,
+            0.0721
+          ],
+          [
+            -37,
+            0.0699
+          ],
+          [
+            -36,
+            0.0661
+          ],
+          [
+            -35,
+            0.0694
+          ],
+          [
+            -34,
+            0.1131
+          ],
+          [
+            -33,
+            0.1558
+          ],
+          [
+            -32,
+            0.1764
+          ],
+          [
+            -31,
+            0.2225
+          ],
+          [
+            -30,
+            0.2568
+          ],
+          [
+            -29,
+            0.2873
+          ],
+          [
+            -28,
+            0.3296
+          ],
+          [
+            -27,
+            0.3621
+          ],
+          [
+            -26,
+            0.071
+          ],
+          [
+            -25,
+            0.1207
+          ],
+          [
+            -24,
+            0.1473
+          ],
+          [
+            -23,
+            0.1968
+          ],
+          [
+            -22,
+            0.2227
+          ],
+          [
+            -21,
+            0.2726
+          ],
+          [
+            -20,
+            0.3012
+          ],
+          [
+            -19,
+            0.3639
+          ],
+          [
+            -18,
+            0.4295
+          ],
+          [
+            -17,
+            0.0717
+          ],
+          [
+            -16,
+            0.1044
+          ],
+          [
+            -15,
+            0.1566
+          ],
+          [
+            -14,
+            0.1935
+          ],
+          [
+            -13,
+            0.2168
+          ],
+          [
+            -12,
+            0.2472
+          ],
+          [
+            -11,
+            0.3383
+          ],
+          [
+            -10,
+            0.3546
+          ],
+          [
+            -9,
+            0.3706
+          ],
+          [
+            -8,
+            0.0674
+          ],
+          [
+            -7,
+            0.1112
+          ],
+          [
+            -6,
+            0.1554
+          ],
+          [
+            -5,
+            0.205
+          ],
+          [
+            -4,
+            0.2185
+          ],
+          [
+            -3,
+            0.2754
+          ],
+          [
+            -2,
+            0.2853
+          ],
+          [
+            -1,
+            0.3248
+          ],
+          [
+            0,
+            0.399
+          ]
+        ],
+        "baseline": 0.0694,
+        "current": 0.2847,
+        "peak": 0.4295
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:email:error_rate",
+      "source": "metrics",
+      "service": "email",
+      "title": "email error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.005
+          ],
+          [
+            -44,
+            0.0051
+          ],
+          [
+            -43,
+            0.0041
+          ],
+          [
+            -42,
+            0.0039
+          ],
+          [
+            -41,
+            0.0037
+          ],
+          [
+            -40,
+            0.0044
+          ],
+          [
+            -39,
+            0.0031
+          ],
+          [
+            -38,
+            0.0026
+          ],
+          [
+            -37,
+            0.0034
+          ],
+          [
+            -36,
+            0.004
+          ],
+          [
+            -35,
+            0.0036
+          ],
+          [
+            -34,
+            0.004
+          ],
+          [
+            -33,
+            0.0039
+          ],
+          [
+            -32,
+            0.0046
+          ],
+          [
+            -31,
+            0.004
+          ],
+          [
+            -30,
+            0.004
+          ],
+          [
+            -29,
+            0.003
+          ],
+          [
+            -28,
+            0.0046
+          ],
+          [
+            -27,
+            0.005
+          ],
+          [
+            -26,
+            0.2706
+          ],
+          [
+            -25,
+            0.2611
+          ],
+          [
+            -24,
+            0.0029
+          ],
+          [
+            -23,
+            0.003
+          ],
+          [
+            -22,
+            0.0037
+          ],
+          [
+            -21,
+            0.0042
+          ],
+          [
+            -20,
+            0.0037
+          ],
+          [
+            -19,
+            0.0043
+          ],
+          [
+            -18,
+            0.0041
+          ],
+          [
+            -17,
+            0.1936
+          ],
+          [
+            -16,
+            0.1707
+          ],
+          [
+            -15,
+            0.005
+          ],
+          [
+            -14,
+            0.0036
+          ],
+          [
+            -13,
+            0.0048
+          ],
+          [
+            -12,
+            0.0039
+          ],
+          [
+            -11,
+            0.0039
+          ],
+          [
+            -10,
+            0.0044
+          ],
+          [
+            -9,
+            0.0039
+          ],
+          [
+            -8,
+            0.2516
+          ],
+          [
+            -7,
+            0.2793
+          ],
+          [
+            -6,
+            0.0039
+          ],
+          [
+            -5,
+            0.004
+          ],
+          [
+            -4,
+            0.0044
+          ],
+          [
+            -3,
+            0.0043
+          ],
+          [
+            -2,
+            0.0036
+          ],
+          [
+            -1,
+            0.0046
+          ],
+          [
+            0,
+            0.0046
+          ]
+        ],
+        "baseline": 0.0039,
+        "current": 0.0043,
+        "peak": 0.2793
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:email:memory_utilization",
+      "source": "metrics",
+      "service": "email",
+      "title": "email memory utilization: 33.2% \u2192 74.1% (peak 93.5%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3274
+          ],
+          [
+            -44,
+            0.3334
+          ],
+          [
+            -43,
+            0.3256
+          ],
+          [
+            -42,
+            0.3282
+          ],
+          [
+            -41,
+            0.341
+          ],
+          [
+            -40,
+            0.3316
+          ],
+          [
+            -39,
+            0.3289
+          ],
+          [
+            -38,
+            0.3427
+          ],
+          [
+            -37,
+            0.3381
+          ],
+          [
+            -36,
+            0.3281
+          ],
+          [
+            -35,
+            0.3349
+          ],
+          [
+            -34,
+            0.4039
+          ],
+          [
+            -33,
+            0.4836
+          ],
+          [
+            -32,
+            0.5538
+          ],
+          [
+            -31,
+            0.6388
+          ],
+          [
+            -30,
+            0.7165
+          ],
+          [
+            -29,
+            0.7714
+          ],
+          [
+            -28,
+            0.8545
+          ],
+          [
+            -27,
+            0.935
+          ],
+          [
+            -26,
+            0.327
+          ],
+          [
+            -25,
+            0.4007
+          ],
+          [
+            -24,
+            0.4633
+          ],
+          [
+            -23,
+            0.5579
+          ],
+          [
+            -22,
+            0.6227
+          ],
+          [
+            -21,
+            0.6882
+          ],
+          [
+            -20,
+            0.8004
+          ],
+          [
+            -19,
+            0.8335
+          ],
+          [
+            -18,
+            0.917
+          ],
+          [
+            -17,
+            0.3283
+          ],
+          [
+            -16,
+            0.4143
+          ],
+          [
+            -15,
+            0.4601
+          ],
+          [
+            -14,
+            0.5519
+          ],
+          [
+            -13,
+            0.6497
+          ],
+          [
+            -12,
+            0.7066
+          ],
+          [
+            -11,
+            0.7786
+          ],
+          [
+            -10,
+            0.837
+          ],
+          [
+            -9,
+            0.9188
+          ],
+          [
+            -8,
+            0.3224
+          ],
+          [
+            -7,
+            0.3959
+          ],
+          [
+            -6,
+            0.4894
+          ],
+          [
+            -5,
+            0.5592
+          ],
+          [
+            -4,
+            0.6153
+          ],
+          [
+            -3,
+            0.6992
+          ],
+          [
+            -2,
+            0.7815
+          ],
+          [
+            -1,
+            0.8565
+          ],
+          [
+            0,
+            0.9314
+          ]
+        ],
+        "baseline": 0.3316,
+        "current": 0.7405,
+        "peak": 0.935
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:email:p95_latency_ms",
+      "source": "metrics",
+      "service": "email",
+      "title": "email p95 latency ms: 59ms \u2192 924ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            58.994
+          ],
+          [
+            -44,
+            55.2545
+          ],
+          [
+            -43,
+            67.8796
+          ],
+          [
+            -42,
+            58.737
+          ],
+          [
+            -41,
+            60.9164
+          ],
+          [
+            -40,
+            66.6484
+          ],
+          [
+            -39,
+            62.7107
+          ],
+          [
+            -38,
+            53.7264
+          ],
+          [
+            -37,
+            54.5824
+          ],
+          [
+            -36,
+            55.5368
+          ],
+          [
+            -35,
+            67.2219
+          ],
+          [
+            -34,
+            191.9851
+          ],
+          [
+            -33,
+            345.194
+          ],
+          [
+            -32,
+            553.2532
+          ],
+          [
+            -31,
+            586.7474
+          ],
+          [
+            -30,
+            799.1032
+          ],
+          [
+            -29,
+            943.251
+          ],
+          [
+            -28,
+            1125.1025
+          ],
+          [
+            -27,
+            1271.001
+          ],
+          [
+            -26,
+            57.2641
+          ],
+          [
+            -25,
+            212.5203
+          ],
+          [
+            -24,
+            425.6728
+          ],
+          [
+            -23,
+            495.2725
+          ],
+          [
+            -22,
+            771.6796
+          ],
+          [
+            -21,
+            845.3277
+          ],
+          [
+            -20,
+            984.397
+          ],
+          [
+            -19,
+            910.4173
+          ],
+          [
+            -18,
+            1310.4831
+          ],
+          [
+            -17,
+            61.1607
+          ],
+          [
+            -16,
+            218.9187
+          ],
+          [
+            -15,
+            395.5773
+          ],
+          [
+            -14,
+            560.6271
+          ],
+          [
+            -13,
+            670.9205
+          ],
+          [
+            -12,
+            918.1814
+          ],
+          [
+            -11,
+            1088.3006
+          ],
+          [
+            -10,
+            1059.7074
+          ],
+          [
+            -9,
+            1374.9782
+          ],
+          [
+            -8,
+            55.472
+          ],
+          [
+            -7,
+            245.6877
+          ],
+          [
+            -6,
+            375.5833
+          ],
+          [
+            -5,
+            501.1342
+          ],
+          [
+            -4,
+            671.6573
+          ],
+          [
+            -3,
+            918.983
+          ],
+          [
+            -2,
+            1078.9982
+          ],
+          [
+            -1,
+            1063.055
+          ],
+          [
+            0,
+            1308.1473
+          ]
+        ],
+        "baseline": 58.994,
+        "current": 923.6625,
+        "peak": 1374.9782
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:email:request_rate",
+      "source": "metrics",
+      "service": "email",
+      "title": "email request rate: 3.1 req/s \u2192 3.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            3.234
+          ],
+          [
+            -44,
+            2.943
+          ],
+          [
+            -43,
+            2.8211
+          ],
+          [
+            -42,
+            3.2007
+          ],
+          [
+            -41,
+            3.0403
+          ],
+          [
+            -40,
+            3.0993
+          ],
+          [
+            -39,
+            3.1269
+          ],
+          [
+            -38,
+            3.2817
+          ],
+          [
+            -37,
+            3.169
+          ],
+          [
+            -36,
+            2.8659
+          ],
+          [
+            -35,
+            3.0971
+          ],
+          [
+            -34,
+            3.4135
+          ],
+          [
+            -33,
+            2.7244
+          ],
+          [
+            -32,
+            3.1204
+          ],
+          [
+            -31,
+            3.1148
+          ],
+          [
+            -30,
+            3.1139
+          ],
+          [
+            -29,
+            3.1936
+          ],
+          [
+            -28,
+            3.2644
+          ],
+          [
+            -27,
+            2.9619
+          ],
+          [
+            -26,
+            2.9426
+          ],
+          [
+            -25,
+            3.1829
+          ],
+          [
+            -24,
+            3.3443
+          ],
+          [
+            -23,
+            3.2489
+          ],
+          [
+            -22,
+            3.235
+          ],
+          [
+            -21,
+            3.0239
+          ],
+          [
+            -20,
+            3.2643
+          ],
+          [
+            -19,
+            3.1817
+          ],
+          [
+            -18,
+            3.2457
+          ],
+          [
+            -17,
+            2.9214
+          ],
+          [
+            -16,
+            3.1577
+          ],
+          [
+            -15,
+            2.8485
+          ],
+          [
+            -14,
+            3.1972
+          ],
+          [
+            -13,
+            2.9602
+          ],
+          [
+            -12,
+            3.2183
+          ],
+          [
+            -11,
+            3.1077
+          ],
+          [
+            -10,
+            3.0092
+          ],
+          [
+            -9,
+            3.1065
+          ],
+          [
+            -8,
+            3.3344
+          ],
+          [
+            -7,
+            3.0753
+          ],
+          [
+            -6,
+            3.114
+          ],
+          [
+            -5,
+            3.0523
+          ],
+          [
+            -4,
+            3.2174
+          ],
+          [
+            -3,
+            3.1805
+          ],
+          [
+            -2,
+            3.2484
+          ],
+          [
+            -1,
+            2.8915
+          ],
+          [
+            0,
+            3.0352
+          ]
+        ],
+        "baseline": 3.0993,
+        "current": 3.1042,
+        "peak": 3.4135
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:checkout:356ed282af89",
+      "source": "traces",
+      "service": "email",
+      "title": "Slow trace 356ed282af89: 2 spans, 1024ms in email",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "356ed282af89240f2fee768a296383e3",
+        "spans": [
+          {
+            "service": "checkout",
+            "operation": "checkout/handle",
+            "duration_ms": 1324.1,
+            "error": false,
+            "message": "",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "email",
+            "operation": "email/handle",
+            "duration_ms": 1023.9,
+            "error": false,
+            "message": "",
+            "depth": 1,
+            "kind": "server"
+          }
+        ],
+        "origin": "email",
+        "slow": true
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:checkout:summary",
+      "source": "traces",
+      "service": "checkout",
+      "title": "1/200 sampled checkout traces failed in the last 5m; top error origin: payment",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 1,
+        "error_origins": {
+          "payment": 1
+        },
+        "latency_contributors_ms": {
+          "email": 855.6
+        },
+        "p95_ms": 1175.6
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_latency_origin",
+      "service": "email",
+      "score": 3.0,
+      "summary": "email accounts for 100% of added latency in checkout traces (+856ms)",
+      "evidence_ids": [
+        "traces:checkout:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 855.6
+      }
+    },
+    {
+      "kind": "oom_killed",
+      "service": "email",
+      "score": 2.5,
+      "summary": "pod/email-c9e64536-3d55e OOMKilled, 3 restarts",
+      "evidence_ids": [
+        "k8s:email:pod_status"
+      ],
+      "data": {
+        "restarts": 3
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "checkout",
+      "score": 0.8,
+      "summary": "checkout p95 326ms \u2192 1170ms",
+      "evidence_ids": [
+        "metrics:checkout:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 326.0681,
+        "current": 1170.3532
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "email",
+      "score": 0.8,
+      "summary": "email p95 59ms \u2192 924ms",
+      "evidence_ids": [
+        "metrics:email:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 58.994,
+        "current": 923.6625
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "payment",
+      "score": 0.75,
+      "summary": "payment rolled out 2.0.2 \u2192 2.0.3 23m before the alert",
+      "evidence_ids": [
+        "changes:payment:deploy:1"
+      ],
+      "data": {
+        "minutes_before_alert": 22.9,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "memory_pressure",
+      "service": "email",
+      "score": 0.6,
+      "summary": "email: heap usage above 90% after full GC",
+      "evidence_ids": [
+        "logs:email:1"
+      ],
+      "data": {}
+    },
+    {
+      "kind": "restarts",
+      "service": "ad",
+      "score": 0.3,
+      "summary": "pod/ad-4c9fe7cb-bdbb3 restarted 1\u00d7",
+      "evidence_ids": [
+        "k8s:ad:pod_status"
+      ],
+      "data": {}
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-01-20",
+      "title": "Payment 1.7.3 release failed card charges with a TypeError",
+      "type": "postmortem",
+      "services": [
+        "payment",
+        "checkout"
+      ],
+      "category": "bad_deploy",
+      "date": "2026-01-20",
+      "snippet": "## Summary A payment release changed the shape of the `amount` object. 35% of charges failed with `TypeError: Cannot read properties of undefined (reading 'units')`. Checkout's error-rate alert fired 9 minutes after rollout. ## Root cause Bad deploy. The new code assumed `amount.units` was always set; older clients sent `amount.nanos` only. ## Resolution `kubectl rollout undo deployment/payment`. \u2026",
+      "score": 23.076
+    },
+    {
+      "id": "RB-oom",
+      "title": "Pods restarting with OOMKilled",
+      "type": "runbook",
+      "services": [
+        "*"
+      ],
+      "category": "memory_leak",
+      "date": null,
+      "snippet": "Signs: `lastState.terminated.reason=OOMKilled`, sawtooth memory, restarts increasing. 1. `kubectl -n otel-demo describe pod <pod>` and check Last State. 2. Is memory growth linear between restarts (leak) or a step after a deploy (new baseline)? 3. Mitigate: `kubectl -n otel-demo rollout restart deployment/<svc>` or raise the limit temporarily. 4. Capture a heap profile before the next OOM (pprof /\u2026",
+      "score": 21.319
+    },
+    {
+      "id": "PM-2026-05-04",
+      "title": "Recommendation OOM loop from an unbounded product cache",
+      "type": "postmortem",
+      "services": [
+        "recommendation",
+        "frontend"
+      ],
+      "category": "memory_leak",
+      "date": "2026-05-04",
+      "snippet": "## Summary Recommendation was OOMKilled every ~7 minutes for two hours. Each restart dropped in-flight requests, so frontend saw periodic bursts of 5xx. Memory grew linearly from ~45% to 100% of the limit between restarts (sawtooth). ## Root cause An in-process cache keyed by product-id list had no eviction. The `recommendationCacheFailure` flag reproduces this. ## Resolution Restarted the deploym\u2026",
+      "score": 19.472
+    },
+    {
+      "id": "PM-2026-04-22",
+      "title": "Ad service CPU saturation slowed every product page",
+      "type": "postmortem",
+      "services": [
+        "ad",
+        "frontend"
+      ],
+      "category": "cpu_saturation",
+      "date": "2026-04-22",
+      "snippet": "## Summary A regex in ad targeting went quadratic on long keyword lists. Ad CPU sat at 97% of its limit with heavy throttling, p95 rose to 1.5s and frontend page latency breached its SLO. A small share of ad calls hit DEADLINE_EXCEEDED. ## Resolution Scaled ad to 4 replicas, then fixed the regex. ## Lessons - CPU at limit + `CPUThrottlingHigh` + latency on one service with no errors elsewhere = sa\u2026",
+      "score": 15.68
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 13.664
+    }
+  ],
+  "services_examined": [
+    "checkout",
+    "email"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "email",
+    "expected_category": "memory_leak",
+    "predicted_service": "email",
+    "predicted_category": "memory_leak",
+    "confidence": 0.85
+  },
+  "slack_posted": false
+}

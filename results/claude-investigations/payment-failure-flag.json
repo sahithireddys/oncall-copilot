@@ -1,0 +1,2505 @@
+{
+  "id": "b2471be6cf35",
+  "alert": {
+    "name": "CheckoutHighErrorRate",
+    "service": "checkout",
+    "severity": "critical",
+    "summary": "checkout error rate > 5% for 5m",
+    "labels": {
+      "scenario_id": "payment-failure-flag"
+    },
+    "starts_at": "2026-09-30T02:49:23.990703Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "payment-failure-flag",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:49:23.990720Z",
+  "completed_at": "2026-09-30T02:49:57.238494Z",
+  "duration_ms": 33246,
+  "hypothesis": {
+    "root_cause_service": "payment",
+    "category": "config_change",
+    "title": "payment flagd config enabled paymentFailure flag to 25%, causing token validation errors",
+    "summary": "The flagd-config ConfigMap was changed 10 minutes before the alert, setting the paymentFailure feature flag from 'off' to '25%'. This caused payment to reject ~25% of requests with \"Invalid token\" errors for gold loyalty customers. These errors propagated upstream to checkout, triggering the CheckoutHighErrorRate alert. Payment's own metrics show a matching 24.8% error rate with no resource or latency issues.",
+    "reasoning": "The alert fired for checkout's high error rate (23%), but the telemetry clearly shows checkout is a victim, not the root cause. 98% of failing checkout traces end in payment (evidence traces:checkout:summary shows 42/43 errors originate in payment). The error logs from both services show the same message: \"Payment request failed. Invalid token. app.loyalty.level=gold\" (logs:payment:1, logs:checkout:1). Payment's own error rate spiked from 0.4% to 24.8% at the same time (metrics:payment:error_rate). The timing is critical: the configmap/flagd-config changed the paymentFailure flag from 'off' to '25%' 10 minutes before the alert (changes:payment:config:0), and error logs first appeared 9 minutes before the alert. Payment's CPU, memory, and latency metrics are all healthy, ruling out resource saturation. The ad deployment 26 minutes before the alert is a red herring\u2014ad is not on the failing call path from checkout to payment. The fraud-detection restart (exit 137, likely OOMKilled) is also unrelated since fraud-detection is an async Kafka consumer, not in the synchronous checkout flow. This matches the pattern in RB-flagd and similar config-driven failures. The root cause is the feature-flag config change enabling synthetic payment failures.",
+    "confidence": 0.92,
+    "supporting_evidence": [
+      {
+        "evidence_id": "changes:payment:config:0",
+        "why_it_matters": "ConfigMap flagd-config changed paymentFailure from 'off' to '25%' exactly 10 minutes before the alert, matching the timing of the error spike."
+      },
+      {
+        "evidence_id": "logs:payment:1",
+        "why_it_matters": "418 ERROR logs in payment with 'Invalid token' message first appeared 9 minutes before alert, immediately after the config change."
+      },
+      {
+        "evidence_id": "metrics:payment:error_rate",
+        "why_it_matters": "Payment error rate jumped from 0.4% to 24.8% (close to the 25% flag value), confirming the flag is actively causing failures."
+      },
+      {
+        "evidence_id": "traces:checkout:summary",
+        "why_it_matters": "98% (42/43) of failing checkout traces terminate in payment, proving payment is the error origin, not checkout."
+      },
+      {
+        "evidence_id": "traces:checkout:f6cc53fe4e57",
+        "why_it_matters": "Example trace shows the error originates in payment:payment/handle span with the exact 'Invalid token' message, then propagates to checkout."
+      },
+      {
+        "evidence_id": "metrics:payment:p95_latency_ms",
+        "why_it_matters": "Payment latency remains stable at ~46ms, ruling out resource saturation or datastore issues as the cause."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Revert the paymentFailure feature flag to 'off' in flagd-config",
+        "command": "kubectl -n otel-demo get cm flagd-config -o yaml | sed 's/\"paymentFailure\": \"25%\"/\"paymentFailure\": \"off\"/' | kubectl apply -f -",
+        "risk": "low",
+        "rationale": "The paymentFailure flag was changed from 'off' to '25%' 10 minutes before the alert and is directly causing 25% of payment requests to fail. Reverting it will immediately stop the synthetic failures."
+      },
+      {
+        "title": "Verify error rate drops after flag revert",
+        "command": "kubectl -n otel-demo logs -l app=payment --tail=50 --timestamps | grep -i error",
+        "risk": "low",
+        "rationale": "Confirm that payment error logs stop appearing after the flag is reverted, validating the mitigation."
+      },
+      {
+        "title": "Check flagd-config change history and notify the team",
+        "command": "kubectl -n otel-demo get cm flagd-config -o jsonpath='{.data.demo\\.flagd\\.json}' | jq .",
+        "risk": "low",
+        "rationale": "Identify who made the config change and whether it was intentional (e.g., chaos testing) or accidental, to prevent recurrence."
+      }
+    ],
+    "related_documents": [
+      "RB-flagd",
+      "PM-2026-07-09"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "checkout",
+        "category": "bad_deploy",
+        "why_less_likely": "Checkout was deployed 37 minutes before the alert (changes:checkout:deploy:2), but errors only started 9 minutes before the alert, 28 minutes after the deploy. The timing doesn't match, and traces show errors originate in payment, not checkout."
+      },
+      {
+        "root_cause_service": "ad",
+        "category": "bad_deploy",
+        "why_less_likely": "Ad was deployed 26 minutes before the alert, but ad is not on the call path from checkout to payment. The failing traces show no ad involvement, and the error message is payment-specific ('Invalid token')."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:ad:deploy:1",
+      "source": "changes",
+      "service": "ad",
+      "title": "deployment/ad rolled out 2.0.1 \u2192 2.0.2 (26m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/ad",
+        "from_version": "2.0.1",
+        "to_version": "2.0.2",
+        "minutes_before_alert": 26.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:checkout:deploy:2",
+      "source": "changes",
+      "service": "checkout",
+      "title": "deployment/checkout rolled out 2.0.2 \u2192 2.0.3 (37m before alert)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/checkout",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 36.7
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:payment:config:0",
+      "source": "changes",
+      "service": "payment",
+      "title": "configmap/flagd-config: paymentFailure changed 'off' \u2192 '25%' (10m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "config_change",
+        "resource": "configmap/flagd-config",
+        "key": "paymentFailure",
+        "old": "off",
+        "new": "25%",
+        "minutes_before_alert": 9.5,
+        "affects": "payment"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:fraud-detection:pod_status",
+      "source": "k8s_events",
+      "service": "fraud-detection",
+      "title": "pod/fraud-detection-3b81f0d5-4ca83 restarts=1, last terminated: Error (exit code 137)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/fraud-detection-3b81f0d5-4ca83",
+        "phase": "Running",
+        "restarts": 1,
+        "last_termination_reason": "Error (exit code 137)",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:checkout:1",
+      "source": "logs",
+      "service": "checkout",
+      "title": "367\u00d7 ERROR failed calling payment: Payment request failed. Invalid token. app.loyalty.level=gold",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "failed calling payment: Payment request failed. Invalid token. app.loyalty.level=gold",
+        "level": "ERROR",
+        "count": 367,
+        "sample": "failed calling payment: Payment request failed. Invalid token. app.loyalty.level=gold",
+        "first_seen_min": -9.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:payment:1",
+      "source": "logs",
+      "service": "payment",
+      "title": "418\u00d7 ERROR Payment request failed. Invalid token. app.loyalty.level=gold",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "Payment request failed. Invalid token. app.loyalty.level=gold",
+        "level": "ERROR",
+        "count": 418,
+        "sample": "Payment request failed. Invalid token. app.loyalty.level=gold (trace_id=\u2026)",
+        "first_seen_min": -9.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:cpu_utilization",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout cpu utilization: 18.6% \u2192 19.0% (peak 20.1%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1773
+          ],
+          [
+            -44,
+            0.1933
+          ],
+          [
+            -43,
+            0.1829
+          ],
+          [
+            -42,
+            0.177
+          ],
+          [
+            -41,
+            0.1778
+          ],
+          [
+            -40,
+            0.1974
+          ],
+          [
+            -39,
+            0.1974
+          ],
+          [
+            -38,
+            0.1862
+          ],
+          [
+            -37,
+            0.1874
+          ],
+          [
+            -36,
+            0.1762
+          ],
+          [
+            -35,
+            0.1888
+          ],
+          [
+            -34,
+            0.1802
+          ],
+          [
+            -33,
+            0.1739
+          ],
+          [
+            -32,
+            0.1872
+          ],
+          [
+            -31,
+            0.1794
+          ],
+          [
+            -30,
+            0.173
+          ],
+          [
+            -29,
+            0.1657
+          ],
+          [
+            -28,
+            0.1746
+          ],
+          [
+            -27,
+            0.1711
+          ],
+          [
+            -26,
+            0.1795
+          ],
+          [
+            -25,
+            0.1692
+          ],
+          [
+            -24,
+            0.1734
+          ],
+          [
+            -23,
+            0.1793
+          ],
+          [
+            -22,
+            0.1873
+          ],
+          [
+            -21,
+            0.1866
+          ],
+          [
+            -20,
+            0.1893
+          ],
+          [
+            -19,
+            0.1758
+          ],
+          [
+            -18,
+            0.1593
+          ],
+          [
+            -17,
+            0.1777
+          ],
+          [
+            -16,
+            0.1899
+          ],
+          [
+            -15,
+            0.1572
+          ],
+          [
+            -14,
+            0.1914
+          ],
+          [
+            -13,
+            0.1843
+          ],
+          [
+            -12,
+            0.1796
+          ],
+          [
+            -11,
+            0.1769
+          ],
+          [
+            -10,
+            0.1711
+          ],
+          [
+            -9,
+            0.1744
+          ],
+          [
+            -8,
+            0.1881
+          ],
+          [
+            -7,
+            0.1936
+          ],
+          [
+            -6,
+            0.1795
+          ],
+          [
+            -5,
+            0.1959
+          ],
+          [
+            -4,
+            0.1825
+          ],
+          [
+            -3,
+            0.1826
+          ],
+          [
+            -2,
+            0.1864
+          ],
+          [
+            -1,
+            0.2012
+          ],
+          [
+            0,
+            0.1888
+          ]
+        ],
+        "baseline": 0.1862,
+        "current": 0.1896,
+        "peak": 0.2012
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:error_rate",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout error rate: 0.4% \u2192 23.0%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0056
+          ],
+          [
+            -44,
+            0.0044
+          ],
+          [
+            -43,
+            0.0033
+          ],
+          [
+            -42,
+            0.0051
+          ],
+          [
+            -41,
+            0.0039
+          ],
+          [
+            -40,
+            0.0043
+          ],
+          [
+            -39,
+            0.0034
+          ],
+          [
+            -38,
+            0.0043
+          ],
+          [
+            -37,
+            0.0042
+          ],
+          [
+            -36,
+            0.0052
+          ],
+          [
+            -35,
+            0.004
+          ],
+          [
+            -34,
+            0.0038
+          ],
+          [
+            -33,
+            0.0043
+          ],
+          [
+            -32,
+            0.0042
+          ],
+          [
+            -31,
+            0.0037
+          ],
+          [
+            -30,
+            0.0039
+          ],
+          [
+            -29,
+            0.0048
+          ],
+          [
+            -28,
+            0.0041
+          ],
+          [
+            -27,
+            0.0043
+          ],
+          [
+            -26,
+            0.0036
+          ],
+          [
+            -25,
+            0.0049
+          ],
+          [
+            -24,
+            0.0041
+          ],
+          [
+            -23,
+            0.004
+          ],
+          [
+            -22,
+            0.0045
+          ],
+          [
+            -21,
+            0.0037
+          ],
+          [
+            -20,
+            0.0042
+          ],
+          [
+            -19,
+            0.0037
+          ],
+          [
+            -18,
+            0.0035
+          ],
+          [
+            -17,
+            0.0036
+          ],
+          [
+            -16,
+            0.0048
+          ],
+          [
+            -15,
+            0.0039
+          ],
+          [
+            -14,
+            0.0035
+          ],
+          [
+            -13,
+            0.0029
+          ],
+          [
+            -12,
+            0.0041
+          ],
+          [
+            -11,
+            0.0031
+          ],
+          [
+            -10,
+            0.0031
+          ],
+          [
+            -9,
+            0.0038
+          ],
+          [
+            -8,
+            0.1087
+          ],
+          [
+            -7,
+            0.2159
+          ],
+          [
+            -6,
+            0.1818
+          ],
+          [
+            -5,
+            0.2404
+          ],
+          [
+            -4,
+            0.2095
+          ],
+          [
+            -3,
+            0.2277
+          ],
+          [
+            -2,
+            0.2604
+          ],
+          [
+            -1,
+            0.2048
+          ],
+          [
+            0,
+            0.2358
+          ]
+        ],
+        "baseline": 0.0043,
+        "current": 0.2298,
+        "peak": 0.2604
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:memory_utilization",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout memory utilization: 41.3% \u2192 41.5% (peak 42.4%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.4038
+          ],
+          [
+            -44,
+            0.418
+          ],
+          [
+            -43,
+            0.4075
+          ],
+          [
+            -42,
+            0.4113
+          ],
+          [
+            -41,
+            0.4078
+          ],
+          [
+            -40,
+            0.4128
+          ],
+          [
+            -39,
+            0.4193
+          ],
+          [
+            -38,
+            0.4164
+          ],
+          [
+            -37,
+            0.4232
+          ],
+          [
+            -36,
+            0.4233
+          ],
+          [
+            -35,
+            0.4074
+          ],
+          [
+            -34,
+            0.4178
+          ],
+          [
+            -33,
+            0.406
+          ],
+          [
+            -32,
+            0.4217
+          ],
+          [
+            -31,
+            0.3983
+          ],
+          [
+            -30,
+            0.4068
+          ],
+          [
+            -29,
+            0.4079
+          ],
+          [
+            -28,
+            0.4101
+          ],
+          [
+            -27,
+            0.4128
+          ],
+          [
+            -26,
+            0.4087
+          ],
+          [
+            -25,
+            0.4157
+          ],
+          [
+            -24,
+            0.4079
+          ],
+          [
+            -23,
+            0.4068
+          ],
+          [
+            -22,
+            0.4108
+          ],
+          [
+            -21,
+            0.4064
+          ],
+          [
+            -20,
+            0.4121
+          ],
+          [
+            -19,
+            0.4156
+          ],
+          [
+            -18,
+            0.399
+          ],
+          [
+            -17,
+            0.4111
+          ],
+          [
+            -16,
+            0.4245
+          ],
+          [
+            -15,
+            0.4079
+          ],
+          [
+            -14,
+            0.4122
+          ],
+          [
+            -13,
+            0.4198
+          ],
+          [
+            -12,
+            0.4024
+          ],
+          [
+            -11,
+            0.415
+          ],
+          [
+            -10,
+            0.4015
+          ],
+          [
+            -9,
+            0.4092
+          ],
+          [
+            -8,
+            0.4212
+          ],
+          [
+            -7,
+            0.4234
+          ],
+          [
+            -6,
+            0.3982
+          ],
+          [
+            -5,
+            0.4149
+          ],
+          [
+            -4,
+            0.4167
+          ],
+          [
+            -3,
+            0.4223
+          ],
+          [
+            -2,
+            0.4139
+          ],
+          [
+            -1,
+            0.4036
+          ],
+          [
+            0,
+            0.4192
+          ]
+        ],
+        "baseline": 0.4128,
+        "current": 0.4151,
+        "peak": 0.4245
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:p95_latency_ms",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout p95 latency ms: 331ms \u2192 312ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            339.7651
+          ],
+          [
+            -44,
+            330.7998
+          ],
+          [
+            -43,
+            320.4853
+          ],
+          [
+            -42,
+            312.9388
+          ],
+          [
+            -41,
+            336.9078
+          ],
+          [
+            -40,
+            331.705
+          ],
+          [
+            -39,
+            325.074
+          ],
+          [
+            -38,
+            324.0607
+          ],
+          [
+            -37,
+            293.9889
+          ],
+          [
+            -36,
+            351.1173
+          ],
+          [
+            -35,
+            349.5353
+          ],
+          [
+            -34,
+            282.2896
+          ],
+          [
+            -33,
+            299.0053
+          ],
+          [
+            -32,
+            312.8567
+          ],
+          [
+            -31,
+            296.0271
+          ],
+          [
+            -30,
+            335.4019
+          ],
+          [
+            -29,
+            368.1612
+          ],
+          [
+            -28,
+            365.4561
+          ],
+          [
+            -27,
+            320.6626
+          ],
+          [
+            -26,
+            332.891
+          ],
+          [
+            -25,
+            290.6829
+          ],
+          [
+            -24,
+            320.1563
+          ],
+          [
+            -23,
+            307.9983
+          ],
+          [
+            -22,
+            318.4527
+          ],
+          [
+            -21,
+            344.9667
+          ],
+          [
+            -20,
+            341.4748
+          ],
+          [
+            -19,
+            315.3787
+          ],
+          [
+            -18,
+            326.4004
+          ],
+          [
+            -17,
+            337.0585
+          ],
+          [
+            -16,
+            309.0648
+          ],
+          [
+            -15,
+            305.7067
+          ],
+          [
+            -14,
+            329.3296
+          ],
+          [
+            -13,
+            317.7668
+          ],
+          [
+            -12,
+            308.4897
+          ],
+          [
+            -11,
+            348.5159
+          ],
+          [
+            -10,
+            360.4203
+          ],
+          [
+            -9,
+            323.8563
+          ],
+          [
+            -8,
+            310.4387
+          ],
+          [
+            -7,
+            286.0006
+          ],
+          [
+            -6,
+            344.596
+          ],
+          [
+            -5,
+            328.7761
+          ],
+          [
+            -4,
+            302.4819
+          ],
+          [
+            -3,
+            240.3692
+          ],
+          [
+            -2,
+            347.3221
+          ],
+          [
+            -1,
+            295.1642
+          ],
+          [
+            0,
+            356.5474
+          ]
+        ],
+        "baseline": 330.7998,
+        "current": 311.7768,
+        "peak": 368.1612
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:request_rate",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout request rate: 3.2 req/s \u2192 3.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            3.2856
+          ],
+          [
+            -44,
+            3.0479
+          ],
+          [
+            -43,
+            3.4146
+          ],
+          [
+            -42,
+            3.2232
+          ],
+          [
+            -41,
+            3.2242
+          ],
+          [
+            -40,
+            3.3724
+          ],
+          [
+            -39,
+            3.156
+          ],
+          [
+            -38,
+            3.2167
+          ],
+          [
+            -37,
+            3.214
+          ],
+          [
+            -36,
+            3.05
+          ],
+          [
+            -35,
+            3.4957
+          ],
+          [
+            -34,
+            2.9359
+          ],
+          [
+            -33,
+            3.1385
+          ],
+          [
+            -32,
+            3.1328
+          ],
+          [
+            -31,
+            3.1505
+          ],
+          [
+            -30,
+            3.2495
+          ],
+          [
+            -29,
+            3.3141
+          ],
+          [
+            -28,
+            3.3709
+          ],
+          [
+            -27,
+            3.2394
+          ],
+          [
+            -26,
+            3.123
+          ],
+          [
+            -25,
+            3.4949
+          ],
+          [
+            -24,
+            3.008
+          ],
+          [
+            -23,
+            2.9606
+          ],
+          [
+            -22,
+            3.0057
+          ],
+          [
+            -21,
+            3.2329
+          ],
+          [
+            -20,
+            3.3887
+          ],
+          [
+            -19,
+            3.0993
+          ],
+          [
+            -18,
+            2.8614
+          ],
+          [
+            -17,
+            3.2069
+          ],
+          [
+            -16,
+            3.1145
+          ],
+          [
+            -15,
+            3.1404
+          ],
+          [
+            -14,
+            3.2841
+          ],
+          [
+            -13,
+            3.1228
+          ],
+          [
+            -12,
+            3.2794
+          ],
+          [
+            -11,
+            3.0234
+          ],
+          [
+            -10,
+            3.0292
+          ],
+          [
+            -9,
+            3.2906
+          ],
+          [
+            -8,
+            2.9158
+          ],
+          [
+            -7,
+            3.278
+          ],
+          [
+            -6,
+            3.2912
+          ],
+          [
+            -5,
+            2.93
+          ],
+          [
+            -4,
+            3.1911
+          ],
+          [
+            -3,
+            3.0607
+          ],
+          [
+            -2,
+            3.2571
+          ],
+          [
+            -1,
+            3.3835
+          ],
+          [
+            0,
+            2.9606
+          ]
+        ],
+        "baseline": 3.2232,
+        "current": 3.1305,
+        "peak": 3.4957
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:payment:cpu_utilization",
+      "source": "metrics",
+      "service": "payment",
+      "title": "payment cpu utilization: 11.8% \u2192 11.3% (peak 13.8%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1247
+          ],
+          [
+            -44,
+            0.1139
+          ],
+          [
+            -43,
+            0.1238
+          ],
+          [
+            -42,
+            0.1081
+          ],
+          [
+            -41,
+            0.1281
+          ],
+          [
+            -40,
+            0.1184
+          ],
+          [
+            -39,
+            0.1103
+          ],
+          [
+            -38,
+            0.1176
+          ],
+          [
+            -37,
+            0.1174
+          ],
+          [
+            -36,
+            0.1114
+          ],
+          [
+            -35,
+            0.1183
+          ],
+          [
+            -34,
+            0.1247
+          ],
+          [
+            -33,
+            0.1216
+          ],
+          [
+            -32,
+            0.1267
+          ],
+          [
+            -31,
+            0.1153
+          ],
+          [
+            -30,
+            0.1167
+          ],
+          [
+            -29,
+            0.1219
+          ],
+          [
+            -28,
+            0.1176
+          ],
+          [
+            -27,
+            0.1227
+          ],
+          [
+            -26,
+            0.1169
+          ],
+          [
+            -25,
+            0.1384
+          ],
+          [
+            -24,
+            0.1163
+          ],
+          [
+            -23,
+            0.1214
+          ],
+          [
+            -22,
+            0.1148
+          ],
+          [
+            -21,
+            0.1028
+          ],
+          [
+            -20,
+            0.1206
+          ],
+          [
+            -19,
+            0.1215
+          ],
+          [
+            -18,
+            0.1282
+          ],
+          [
+            -17,
+            0.12
+          ],
+          [
+            -16,
+            0.1066
+          ],
+          [
+            -15,
+            0.12
+          ],
+          [
+            -14,
+            0.1245
+          ],
+          [
+            -13,
+            0.1155
+          ],
+          [
+            -12,
+            0.1165
+          ],
+          [
+            -11,
+            0.1201
+          ],
+          [
+            -10,
+            0.1146
+          ],
+          [
+            -9,
+            0.1365
+          ],
+          [
+            -8,
+            0.1267
+          ],
+          [
+            -7,
+            0.1238
+          ],
+          [
+            -6,
+            0.1221
+          ],
+          [
+            -5,
+            0.1144
+          ],
+          [
+            -4,
+            0.1133
+          ],
+          [
+            -3,
+            0.1061
+          ],
+          [
+            -2,
+            0.1154
+          ],
+          [
+            -1,
+            0.1073
+          ],
+          [
+            0,
+            0.1224
+          ]
+        ],
+        "baseline": 0.1176,
+        "current": 0.1132,
+        "peak": 0.1384
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:payment:error_rate",
+      "source": "metrics",
+      "service": "payment",
+      "title": "payment error rate: 0.4% \u2192 24.8%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0044
+          ],
+          [
+            -44,
+            0.0038
+          ],
+          [
+            -43,
+            0.0039
+          ],
+          [
+            -42,
+            0.0047
+          ],
+          [
+            -41,
+            0.0045
+          ],
+          [
+            -40,
+            0.0039
+          ],
+          [
+            -39,
+            0.0034
+          ],
+          [
+            -38,
+            0.004
+          ],
+          [
+            -37,
+            0.004
+          ],
+          [
+            -36,
+            0.0042
+          ],
+          [
+            -35,
+            0.0037
+          ],
+          [
+            -34,
+            0.0047
+          ],
+          [
+            -33,
+            0.0041
+          ],
+          [
+            -32,
+            0.005
+          ],
+          [
+            -31,
+            0.0041
+          ],
+          [
+            -30,
+            0.0045
+          ],
+          [
+            -29,
+            0.0052
+          ],
+          [
+            -28,
+            0.0034
+          ],
+          [
+            -27,
+            0.0046
+          ],
+          [
+            -26,
+            0.0044
+          ],
+          [
+            -25,
+            0.0047
+          ],
+          [
+            -24,
+            0.0036
+          ],
+          [
+            -23,
+            0.0042
+          ],
+          [
+            -22,
+            0.0039
+          ],
+          [
+            -21,
+            0.0045
+          ],
+          [
+            -20,
+            0.003
+          ],
+          [
+            -19,
+            0.0033
+          ],
+          [
+            -18,
+            0.004
+          ],
+          [
+            -17,
+            0.0043
+          ],
+          [
+            -16,
+            0.0035
+          ],
+          [
+            -15,
+            0.0038
+          ],
+          [
+            -14,
+            0.0031
+          ],
+          [
+            -13,
+            0.0055
+          ],
+          [
+            -12,
+            0.0037
+          ],
+          [
+            -11,
+            0.0048
+          ],
+          [
+            -10,
+            0.0042
+          ],
+          [
+            -9,
+            0.0056
+          ],
+          [
+            -8,
+            0.114
+          ],
+          [
+            -7,
+            0.1853
+          ],
+          [
+            -6,
+            0.2706
+          ],
+          [
+            -5,
+            0.2699
+          ],
+          [
+            -4,
+            0.2527
+          ],
+          [
+            -3,
+            0.243
+          ],
+          [
+            -2,
+            0.2456
+          ],
+          [
+            -1,
+            0.2589
+          ],
+          [
+            0,
+            0.2206
+          ]
+        ],
+        "baseline": 0.004,
+        "current": 0.2484,
+        "peak": 0.2706
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:payment:memory_utilization",
+      "source": "metrics",
+      "service": "payment",
+      "title": "payment memory utilization: 38.0% \u2192 37.8% (peak 39.5%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3802
+          ],
+          [
+            -44,
+            0.3722
+          ],
+          [
+            -43,
+            0.3879
+          ],
+          [
+            -42,
+            0.391
+          ],
+          [
+            -41,
+            0.3878
+          ],
+          [
+            -40,
+            0.3904
+          ],
+          [
+            -39,
+            0.373
+          ],
+          [
+            -38,
+            0.3715
+          ],
+          [
+            -37,
+            0.3762
+          ],
+          [
+            -36,
+            0.3707
+          ],
+          [
+            -35,
+            0.3868
+          ],
+          [
+            -34,
+            0.3838
+          ],
+          [
+            -33,
+            0.388
+          ],
+          [
+            -32,
+            0.371
+          ],
+          [
+            -31,
+            0.3682
+          ],
+          [
+            -30,
+            0.3805
+          ],
+          [
+            -29,
+            0.3847
+          ],
+          [
+            -28,
+            0.3673
+          ],
+          [
+            -27,
+            0.3715
+          ],
+          [
+            -26,
+            0.3821
+          ],
+          [
+            -25,
+            0.3947
+          ],
+          [
+            -24,
+            0.3849
+          ],
+          [
+            -23,
+            0.3752
+          ],
+          [
+            -22,
+            0.3861
+          ],
+          [
+            -21,
+            0.3908
+          ],
+          [
+            -20,
+            0.3697
+          ],
+          [
+            -19,
+            0.3678
+          ],
+          [
+            -18,
+            0.3792
+          ],
+          [
+            -17,
+            0.3811
+          ],
+          [
+            -16,
+            0.3662
+          ],
+          [
+            -15,
+            0.376
+          ],
+          [
+            -14,
+            0.3793
+          ],
+          [
+            -13,
+            0.3774
+          ],
+          [
+            -12,
+            0.3839
+          ],
+          [
+            -11,
+            0.3795
+          ],
+          [
+            -10,
+            0.3798
+          ],
+          [
+            -9,
+            0.3866
+          ],
+          [
+            -8,
+            0.385
+          ],
+          [
+            -7,
+            0.3822
+          ],
+          [
+            -6,
+            0.368
+          ],
+          [
+            -5,
+            0.372
+          ],
+          [
+            -4,
+            0.3788
+          ],
+          [
+            -3,
+            0.379
+          ],
+          [
+            -2,
+            0.3778
+          ],
+          [
+            -1,
+            0.3808
+          ],
+          [
+            0,
+            0.3766
+          ]
+        ],
+        "baseline": 0.3802,
+        "current": 0.3775,
+        "peak": 0.3947
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:payment:p95_latency_ms",
+      "source": "metrics",
+      "service": "payment",
+      "title": "payment p95 latency ms: 46ms \u2192 46ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            47.7759
+          ],
+          [
+            -44,
+            46.031
+          ],
+          [
+            -43,
+            46.2984
+          ],
+          [
+            -42,
+            40.3702
+          ],
+          [
+            -41,
+            49.7607
+          ],
+          [
+            -40,
+            43.7523
+          ],
+          [
+            -39,
+            42.9211
+          ],
+          [
+            -38,
+            47.1471
+          ],
+          [
+            -37,
+            41.9522
+          ],
+          [
+            -36,
+            42.5015
+          ],
+          [
+            -35,
+            49.926
+          ],
+          [
+            -34,
+            43.326
+          ],
+          [
+            -33,
+            41.6078
+          ],
+          [
+            -32,
+            42.4048
+          ],
+          [
+            -31,
+            44.3551
+          ],
+          [
+            -30,
+            39.1838
+          ],
+          [
+            -29,
+            45.7357
+          ],
+          [
+            -28,
+            47.0688
+          ],
+          [
+            -27,
+            46.0292
+          ],
+          [
+            -26,
+            41.474
+          ],
+          [
+            -25,
+            44.0113
+          ],
+          [
+            -24,
+            42.0958
+          ],
+          [
+            -23,
+            48.742
+          ],
+          [
+            -22,
+            45.5082
+          ],
+          [
+            -21,
+            43.8379
+          ],
+          [
+            -20,
+            50.2513
+          ],
+          [
+            -19,
+            43.5821
+          ],
+          [
+            -18,
+            45.0685
+          ],
+          [
+            -17,
+            46.9596
+          ],
+          [
+            -16,
+            45.6844
+          ],
+          [
+            -15,
+            44.5594
+          ],
+          [
+            -14,
+            47.6007
+          ],
+          [
+            -13,
+            45.6714
+          ],
+          [
+            -12,
+            45.4434
+          ],
+          [
+            -11,
+            47.1983
+          ],
+          [
+            -10,
+            39.7783
+          ],
+          [
+            -9,
+            43.6157
+          ],
+          [
+            -8,
+            48.3897
+          ],
+          [
+            -7,
+            44.3897
+          ],
+          [
+            -6,
+            47.7528
+          ],
+          [
+            -5,
+            45.5271
+          ],
+          [
+            -4,
+            47.7091
+          ],
+          [
+            -3,
+            46.5514
+          ],
+          [
+            -2,
+            44.4129
+          ],
+          [
+            -1,
+            46.8642
+          ],
+          [
+            0,
+            42.5939
+          ]
+        ],
+        "baseline": 46.031,
+        "current": 45.6098,
+        "peak": 50.2513
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:payment:request_rate",
+      "source": "metrics",
+      "service": "payment",
+      "title": "payment request rate: 3.1 req/s \u2192 3.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            3.2247
+          ],
+          [
+            -44,
+            3.0727
+          ],
+          [
+            -43,
+            3.0899
+          ],
+          [
+            -42,
+            3.3169
+          ],
+          [
+            -41,
+            3.1781
+          ],
+          [
+            -40,
+            2.9064
+          ],
+          [
+            -39,
+            3.0409
+          ],
+          [
+            -38,
+            2.9213
+          ],
+          [
+            -37,
+            3.1313
+          ],
+          [
+            -36,
+            3.0777
+          ],
+          [
+            -35,
+            3.2072
+          ],
+          [
+            -34,
+            3.2383
+          ],
+          [
+            -33,
+            2.9876
+          ],
+          [
+            -32,
+            3.2113
+          ],
+          [
+            -31,
+            2.9757
+          ],
+          [
+            -30,
+            3.1631
+          ],
+          [
+            -29,
+            3.5251
+          ],
+          [
+            -28,
+            2.8092
+          ],
+          [
+            -27,
+            3.0279
+          ],
+          [
+            -26,
+            3.0338
+          ],
+          [
+            -25,
+            2.9977
+          ],
+          [
+            -24,
+            3.0815
+          ],
+          [
+            -23,
+            2.9287
+          ],
+          [
+            -22,
+            2.8816
+          ],
+          [
+            -21,
+            3.5999
+          ],
+          [
+            -20,
+            3.1891
+          ],
+          [
+            -19,
+            2.853
+          ],
+          [
+            -18,
+            3.1896
+          ],
+          [
+            -17,
+            3.2144
+          ],
+          [
+            -16,
+            3.2693
+          ],
+          [
+            -15,
+            3.2721
+          ],
+          [
+            -14,
+            3.0139
+          ],
+          [
+            -13,
+            3.0212
+          ],
+          [
+            -12,
+            3.0253
+          ],
+          [
+            -11,
+            3.2638
+          ],
+          [
+            -10,
+            3.3603
+          ],
+          [
+            -9,
+            2.9056
+          ],
+          [
+            -8,
+            3.0833
+          ],
+          [
+            -7,
+            2.9564
+          ],
+          [
+            -6,
+            3.1246
+          ],
+          [
+            -5,
+            3.1344
+          ],
+          [
+            -4,
+            2.995
+          ],
+          [
+            -3,
+            3.0099
+          ],
+          [
+            -2,
+            3.0471
+          ],
+          [
+            -1,
+            2.8248
+          ],
+          [
+            0,
+            3.5476
+          ]
+        ],
+        "baseline": 3.0899,
+        "current": 3.0931,
+        "peak": 3.5999
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:checkout:f6cc53fe4e57",
+      "source": "traces",
+      "service": "payment",
+      "title": "Failing trace f6cc53fe4e57: checkout \u2192 payment",
+      "detail": "Payment request failed. Invalid token. app.loyalty.level=gold",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "f6cc53fe4e5734a79bf158b0af9398b7",
+        "spans": [
+          {
+            "service": "checkout",
+            "operation": "checkout/handle",
+            "duration_ms": 280.7,
+            "error": true,
+            "message": "rpc error calling payment: code = Internal",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "payment",
+            "operation": "payment/handle",
+            "duration_ms": 24.1,
+            "error": true,
+            "message": "Payment request failed. Invalid token. app.loyalty.level=gold",
+            "depth": 1,
+            "kind": "server"
+          }
+        ],
+        "origin": "payment"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:checkout:summary",
+      "source": "traces",
+      "service": "checkout",
+      "title": "43/200 sampled checkout traces failed in the last 5m; top error origin: payment",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 43,
+        "error_origins": {
+          "payment": 42,
+          "accounting": 1
+        },
+        "latency_contributors_ms": {},
+        "p95_ms": 320.0
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_error_origin",
+      "service": "payment",
+      "score": 3.419,
+      "summary": "98% of failing checkout traces end in payment",
+      "evidence_ids": [
+        "traces:checkout:summary"
+      ],
+      "data": {
+        "share": 0.9767441860465116,
+        "count": 42
+      }
+    },
+    {
+      "kind": "recent_config_change",
+      "service": "payment",
+      "score": 1.5,
+      "summary": "configmap/flagd-config: paymentFailure 'off' \u2192 '25%' 10m before the alert",
+      "evidence_ids": [
+        "changes:payment:config:0"
+      ],
+      "data": {
+        "minutes_before_alert": 9.5,
+        "key": "paymentFailure"
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "checkout",
+      "score": 1.0,
+      "summary": "checkout error rate 0.4% \u2192 23.0%",
+      "evidence_ids": [
+        "metrics:checkout:error_rate"
+      ],
+      "data": {
+        "baseline": 0.0043,
+        "current": 0.2298
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "payment",
+      "score": 1.0,
+      "summary": "payment error rate 0.4% \u2192 24.8%",
+      "evidence_ids": [
+        "metrics:payment:error_rate"
+      ],
+      "data": {
+        "baseline": 0.004,
+        "current": 0.2484
+      }
+    },
+    {
+      "kind": "error_logs",
+      "service": "payment",
+      "score": 1.0,
+      "summary": "418\u00d7 ERROR in payment: Payment request failed. Invalid token. app.loyalty.level=gold",
+      "evidence_ids": [
+        "logs:payment:1"
+      ],
+      "data": {
+        "count": 418,
+        "message": "Payment request failed. Invalid token. app.loyalty.level=gold"
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "ad",
+      "score": 0.75,
+      "summary": "ad rolled out 2.0.1 \u2192 2.0.2 26m before the alert",
+      "evidence_ids": [
+        "changes:ad:deploy:1"
+      ],
+      "data": {
+        "minutes_before_alert": 26.0,
+        "to_version": "2.0.2"
+      }
+    },
+    {
+      "kind": "downstream_errors",
+      "service": "payment",
+      "score": 0.4,
+      "summary": "checkout logs 367 errors calling payment",
+      "evidence_ids": [
+        "logs:checkout:1"
+      ],
+      "data": {
+        "caller": "checkout"
+      }
+    },
+    {
+      "kind": "restarts",
+      "service": "fraud-detection",
+      "score": 0.3,
+      "summary": "pod/fraud-detection-3b81f0d5-4ca83 restarted 1\u00d7",
+      "evidence_ids": [
+        "k8s:fraud-detection:pod_status"
+      ],
+      "data": {}
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-01-20",
+      "title": "Payment 1.7.3 release failed card charges with a TypeError",
+      "type": "postmortem",
+      "services": [
+        "payment",
+        "checkout"
+      ],
+      "category": "bad_deploy",
+      "date": "2026-01-20",
+      "snippet": "## Summary A payment release changed the shape of the `amount` object. 35% of charges failed with `TypeError: Cannot read properties of undefined (reading 'units')`. Checkout's error-rate alert fired 9 minutes after rollout. ## Root cause Bad deploy. The new code assumed `amount.units` was always set; older clients sent `amount.nanos` only. ## Resolution `kubectl rollout undo deployment/payment`. \u2026",
+      "score": 45.804
+    },
+    {
+      "id": "PM-2026-07-09",
+      "title": "Shipping failed after a quote address change",
+      "type": "postmortem",
+      "services": [
+        "shipping",
+        "quote",
+        "checkout"
+      ],
+      "category": "config_change",
+      "date": "2026-07-09",
+      "snippet": "## Summary A Helm values change renamed the quote service address. Shipping could not resolve `quote-svc` and 90% of checkouts failed at the shipping step with `dns error`. ## Root cause Configuration change on shipping (QUOTE_ADDR). Quote itself was healthy and idle. ## Resolution Reverted the env var and redeployed shipping. ## Lessons - `no such host` / `dns error` in a caller plus an idle call\u2026",
+      "score": 20.898
+    },
+    {
+      "id": "RB-flagd",
+      "title": "Check and revert feature flags (flagd)",
+      "type": "runbook",
+      "services": [
+        "*"
+      ],
+      "category": "config_change",
+      "date": null,
+      "snippet": "The demo's failure flags live in the `flagd-config` ConfigMap: paymentFailure, paymentUnreachable, adFailure, adHighCpu, adManualGc, cartFailure, productCatalogFailure, recommendationCacheFailure, kafkaQueueProblems, imageSlowLoad, emailMemoryLeak, failedReadinessProbe. 1. `kubectl -n otel-demo get cm flagd-config -o jsonpath='{.data.demo\\.flagd\\.json}' | jq '.flags | map_values(.defaultVariant)'`\u2026",
+      "score": 18.859
+    },
+    {
+      "id": "PM-2026-08-02",
+      "title": "Currency crash loop after a release missing its data file",
+      "type": "postmortem",
+      "services": [
+        "currency",
+        "frontend",
+        "checkout"
+      ],
+      "category": "crash_loop",
+      "date": "2026-08-02",
+      "snippet": "## Summary Currency 2.0.1 shipped without `currency_conversion.json`. Pods exited on start-up (`std::runtime_error`), entered CrashLoopBackOff and frontend errors reached 60% because almost every page converts prices. ## Root cause Crash loop introduced by a bad release (packaging error). ## Resolution `kubectl rollout undo deployment/currency`. ## Lessons - `waiting: CrashLoopBackOff` + near-zero\u2026",
+      "score": 18.421
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 17.39
+    }
+  ],
+  "services_examined": [
+    "checkout",
+    "payment"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "payment",
+    "expected_category": "config_change",
+    "predicted_service": "payment",
+    "predicted_category": "config_change",
+    "confidence": 0.92
+  },
+  "slack_posted": false
+}

@@ -1,0 +1,3728 @@
+{
+  "id": "c0a6fc1651ff",
+  "alert": {
+    "name": "FrontendHighErrorRate",
+    "service": "frontend",
+    "severity": "critical",
+    "summary": "frontend 5xx ratio > 2% for 5m",
+    "labels": {
+      "scenario_id": "recommendation-memory-leak"
+    },
+    "starts_at": "2026-09-30T02:49:54.704273Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "recommendation-memory-leak",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:49:54.704613Z",
+  "completed_at": "2026-09-30T02:50:22.020148Z",
+  "duration_ms": 27314,
+  "hypothesis": {
+    "root_cause_service": "recommendation",
+    "category": "memory_leak",
+    "title": "Recommendation OOM loop from unbounded cache growing to 1.9GiB",
+    "summary": "The recommendation service has an unbounded in-memory cache that grows to 1.9GiB, causing heap exhaustion and full-GC pressure. Every ~10-15 minutes the pod is OOMKilled and restarts, dropping in-flight requests. Frontend sees periodic bursts of MemoryError responses from recommendation, triggering the 5xx alert. This matches the known pattern from PM-2026-05-04.",
+    "reasoning": "The alert fired on frontend's 5xx error rate. Tracing the errors upstream: 83% of failing frontend traces end in recommendation (evidence traces:frontend:summary), and 94% of failing recommendation traces fail within recommendation itself (traces:recommendation:summary). The deepest error in multiple traces is \"MemoryError: cache grew to 1.9GiB\" originating from recommendation. The recommendation pod was OOMKilled 4 times (k8s:recommendation:pod_status), and memory utilization peaked at 95% of limit (metrics:recommendation:memory_utilization). Logs show \"heap usage above 90% after full GC\" 384 times starting 30 minutes before the alert (logs:recommendation:1), indicating memory pressure and GC thrashing before the OOM kills. The error pattern matches postmortem PM-2026-05-04 exactly: an unbounded product cache in recommendation causing a sawtooth OOM loop. The ad service deploy (changes:ad:deploy:0) happened 38 minutes before the alert but ad is not on the failing call path (frontend \u2192 recommendation), so it's a red herring. Product-catalog is healthy (0.4% error rate, 18ms p95). The currency restart (k8s:currency:pod_status) is also unrelated\u2014currency is not in the failing traces. This is a memory leak in recommendation causing periodic OOMKills and error bursts.",
+    "confidence": 0.92,
+    "supporting_evidence": [
+      {
+        "evidence_id": "k8s:recommendation:pod_status",
+        "why_it_matters": "Pod was OOMKilled 4 times, confirming memory exhaustion is causing restarts and service disruption."
+      },
+      {
+        "evidence_id": "traces:frontend:f01e4502ed8e",
+        "why_it_matters": "Failing trace shows the error originates in recommendation with 'MemoryError: cache grew to 1.9GiB', proving the root cause."
+      },
+      {
+        "evidence_id": "logs:recommendation:1",
+        "why_it_matters": "384 warnings of heap above 90% after full GC starting 30m before alert indicate memory leak and GC thrashing before OOM."
+      },
+      {
+        "evidence_id": "metrics:recommendation:memory_utilization",
+        "why_it_matters": "Memory peaked at 95% of limit with a sawtooth pattern consistent with leak-then-OOM-then-restart cycle."
+      },
+      {
+        "evidence_id": "traces:recommendation:summary",
+        "why_it_matters": "94% of failing recommendation traces fail within recommendation itself, ruling out downstream dependencies."
+      },
+      {
+        "evidence_id": "logs:frontend:1",
+        "why_it_matters": "2,448 frontend errors calling recommendation with the same MemoryError confirm the propagation path to the alerting service."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Restart recommendation deployment to temporarily clear the cache and restore service",
+        "command": "kubectl -n otel-demo rollout restart deployment/recommendation",
+        "risk": "low",
+        "rationale": "Clears the unbounded cache and stops the OOM loop immediately. This is the safest first step to restore service while investigating the code fix."
+      },
+      {
+        "title": "Increase memory limit for recommendation to buy time for a code fix",
+        "command": "kubectl -n otel-demo set resources deployment/recommendation --limits=memory=4Gi",
+        "risk": "low",
+        "rationale": "Extends the time between OOM kills, reducing error bursts. However, this only delays the problem if the cache truly has no eviction policy."
+      },
+      {
+        "title": "Review and deploy a fix for the unbounded product cache in recommendation",
+        "command": null,
+        "risk": "medium",
+        "rationale": "The root cause is a code defect (unbounded cache). Add an LRU eviction policy or size limit to the cache, referencing PM-2026-05-04 for the previous fix."
+      }
+    ],
+    "related_documents": [
+      "PM-2026-05-04",
+      "RB-oom"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "product-catalog",
+        "category": "datastore_degradation",
+        "why_less_likely": "Product-catalog metrics are healthy (0.4% error rate, 18ms p95, stable CPU/memory). Only 1 of 200 traces failed, and 94% of recommendation errors originate in recommendation itself, not downstream."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:ad:deploy:0",
+      "source": "changes",
+      "service": "ad",
+      "title": "deployment/ad rolled out 2.0.2 \u2192 2.0.3 (38m before alert)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/ad",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 37.7
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:currency:pod_status",
+      "source": "k8s_events",
+      "service": "currency",
+      "title": "pod/currency-5242c472-46622 restarts=1, last terminated: Error (exit code 137)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/currency-5242c472-46622",
+        "phase": "Running",
+        "restarts": 1,
+        "last_termination_reason": "Error (exit code 137)",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:recommendation:BackOff:1",
+      "source": "k8s_events",
+      "service": "recommendation",
+      "title": "BackOff \u00d74 on pod/recommendation-5abdfa8c-073cd",
+      "detail": "Back-off restarting failed container",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "BackOff",
+        "object": "pod/recommendation-5abdfa8c-073cd",
+        "count": 4,
+        "message": "Back-off restarting failed container",
+        "first_seen_min": -25.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:recommendation:pod_status",
+      "source": "k8s_events",
+      "service": "recommendation",
+      "title": "pod/recommendation-5abdfa8c-073cd restarts=4, last terminated: OOMKilled",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/recommendation-5abdfa8c-073cd",
+        "phase": "Running",
+        "restarts": 4,
+        "last_termination_reason": "OOMKilled",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:1",
+      "source": "logs",
+      "service": "frontend",
+      "title": "2,448\u00d7 ERROR failed calling recommendation: MemoryError: cache grew to 1.9GiB",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "failed calling recommendation: MemoryError: cache grew to 1.9GiB",
+        "level": "ERROR",
+        "count": 2448,
+        "sample": "failed calling recommendation: MemoryError: cache grew to 1.9GiB",
+        "first_seen_min": -32.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:2",
+      "source": "logs",
+      "service": "frontend",
+      "title": "14\u00d7 WARN slow render for /product/{id} (>500ms)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "slow render for /product/{id} (>500ms)",
+        "level": "WARN",
+        "count": 14,
+        "sample": "slow render for /product/{id} (>500ms)",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:product-catalog:1",
+      "source": "logs",
+      "service": "product-catalog",
+      "title": "6\u00d7 WARN product {id} not found",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "product {id} not found",
+        "level": "WARN",
+        "count": 6,
+        "sample": "product {id} not found",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:product-catalog:2",
+      "source": "logs",
+      "service": "product-catalog",
+      "title": "1\u00d7 WARN catalog reload took 2.1s",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "catalog reload took 2.1s",
+        "level": "WARN",
+        "count": 1,
+        "sample": "catalog reload took 2.1s",
+        "first_seen_min": -30.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:recommendation:1",
+      "source": "logs",
+      "service": "recommendation",
+      "title": "384\u00d7 WARN heap usage above 90% after full GC",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "heap usage above 90% after full GC",
+        "level": "WARN",
+        "count": 384,
+        "sample": "heap usage above 90% after full GC",
+        "first_seen_min": -30.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:recommendation:2",
+      "source": "logs",
+      "service": "recommendation",
+      "title": "4\u00d7 ERROR MemoryError: cache grew to 1.9GiB",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "MemoryError: cache grew to 1.9GiB",
+        "level": "ERROR",
+        "count": 4,
+        "sample": "MemoryError: cache grew to 1.9GiB",
+        "first_seen_min": -25.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:recommendation:3",
+      "source": "logs",
+      "service": "recommendation",
+      "title": "30\u00d7 INFO cache miss rate 12%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "cache miss rate 12%",
+        "level": "INFO",
+        "count": 30,
+        "sample": "cache miss rate 12%",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:cpu_utilization",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend cpu utilization: 35.4% \u2192 34.0% (peak 37.3%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3344
+          ],
+          [
+            -44,
+            0.3332
+          ],
+          [
+            -43,
+            0.3537
+          ],
+          [
+            -42,
+            0.354
+          ],
+          [
+            -41,
+            0.3535
+          ],
+          [
+            -40,
+            0.3706
+          ],
+          [
+            -39,
+            0.3565
+          ],
+          [
+            -38,
+            0.3303
+          ],
+          [
+            -37,
+            0.357
+          ],
+          [
+            -36,
+            0.3323
+          ],
+          [
+            -35,
+            0.3502
+          ],
+          [
+            -34,
+            0.3459
+          ],
+          [
+            -33,
+            0.3233
+          ],
+          [
+            -32,
+            0.3698
+          ],
+          [
+            -31,
+            0.3368
+          ],
+          [
+            -30,
+            0.3476
+          ],
+          [
+            -29,
+            0.3633
+          ],
+          [
+            -28,
+            0.3593
+          ],
+          [
+            -27,
+            0.3307
+          ],
+          [
+            -26,
+            0.3493
+          ],
+          [
+            -25,
+            0.3546
+          ],
+          [
+            -24,
+            0.3387
+          ],
+          [
+            -23,
+            0.3294
+          ],
+          [
+            -22,
+            0.3371
+          ],
+          [
+            -21,
+            0.3467
+          ],
+          [
+            -20,
+            0.3492
+          ],
+          [
+            -19,
+            0.3497
+          ],
+          [
+            -18,
+            0.3423
+          ],
+          [
+            -17,
+            0.3574
+          ],
+          [
+            -16,
+            0.3525
+          ],
+          [
+            -15,
+            0.3342
+          ],
+          [
+            -14,
+            0.3734
+          ],
+          [
+            -13,
+            0.3429
+          ],
+          [
+            -12,
+            0.36
+          ],
+          [
+            -11,
+            0.3189
+          ],
+          [
+            -10,
+            0.3528
+          ],
+          [
+            -9,
+            0.3526
+          ],
+          [
+            -8,
+            0.3602
+          ],
+          [
+            -7,
+            0.3381
+          ],
+          [
+            -6,
+            0.3131
+          ],
+          [
+            -5,
+            0.3583
+          ],
+          [
+            -4,
+            0.3137
+          ],
+          [
+            -3,
+            0.3682
+          ],
+          [
+            -2,
+            0.3468
+          ],
+          [
+            -1,
+            0.3351
+          ],
+          [
+            0,
+            0.3204
+          ]
+        ],
+        "baseline": 0.3535,
+        "current": 0.3404,
+        "peak": 0.3734
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:error_rate",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend error rate: 0.4% \u2192 3.4%",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0044
+          ],
+          [
+            -44,
+            0.0035
+          ],
+          [
+            -43,
+            0.0042
+          ],
+          [
+            -42,
+            0.0038
+          ],
+          [
+            -41,
+            0.0046
+          ],
+          [
+            -40,
+            0.0035
+          ],
+          [
+            -39,
+            0.0037
+          ],
+          [
+            -38,
+            0.0041
+          ],
+          [
+            -37,
+            0.0048
+          ],
+          [
+            -36,
+            0.0045
+          ],
+          [
+            -35,
+            0.0052
+          ],
+          [
+            -34,
+            0.0044
+          ],
+          [
+            -33,
+            0.0035
+          ],
+          [
+            -32,
+            0.004
+          ],
+          [
+            -31,
+            0.0035
+          ],
+          [
+            -30,
+            0.0033
+          ],
+          [
+            -29,
+            0.0033
+          ],
+          [
+            -28,
+            0.0027
+          ],
+          [
+            -27,
+            0.0043
+          ],
+          [
+            -26,
+            0.0047
+          ],
+          [
+            -25,
+            0.1142
+          ],
+          [
+            -24,
+            0.0883
+          ],
+          [
+            -23,
+            0.0047
+          ],
+          [
+            -22,
+            0.0035
+          ],
+          [
+            -21,
+            0.0041
+          ],
+          [
+            -20,
+            0.0044
+          ],
+          [
+            -19,
+            0.0042
+          ],
+          [
+            -18,
+            0.0916
+          ],
+          [
+            -17,
+            0.0829
+          ],
+          [
+            -16,
+            0.0042
+          ],
+          [
+            -15,
+            0.0047
+          ],
+          [
+            -14,
+            0.0031
+          ],
+          [
+            -13,
+            0.0042
+          ],
+          [
+            -12,
+            0.0041
+          ],
+          [
+            -11,
+            0.094
+          ],
+          [
+            -10,
+            0.0927
+          ],
+          [
+            -9,
+            0.0033
+          ],
+          [
+            -8,
+            0.0039
+          ],
+          [
+            -7,
+            0.0044
+          ],
+          [
+            -6,
+            0.0045
+          ],
+          [
+            -5,
+            0.0046
+          ],
+          [
+            -4,
+            0.0835
+          ],
+          [
+            -3,
+            0.1027
+          ],
+          [
+            -2,
+            0.0039
+          ],
+          [
+            -1,
+            0.0039
+          ],
+          [
+            0,
+            0.0045
+          ]
+        ],
+        "baseline": 0.0042,
+        "current": 0.0338,
+        "peak": 0.1142
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:memory_utilization",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend memory utilization: 52.4% \u2192 51.8% (peak 54.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.5316
+          ],
+          [
+            -44,
+            0.5453
+          ],
+          [
+            -43,
+            0.5251
+          ],
+          [
+            -42,
+            0.5076
+          ],
+          [
+            -41,
+            0.5209
+          ],
+          [
+            -40,
+            0.5199
+          ],
+          [
+            -39,
+            0.5277
+          ],
+          [
+            -38,
+            0.5229
+          ],
+          [
+            -37,
+            0.5124
+          ],
+          [
+            -36,
+            0.5262
+          ],
+          [
+            -35,
+            0.5236
+          ],
+          [
+            -34,
+            0.5087
+          ],
+          [
+            -33,
+            0.5323
+          ],
+          [
+            -32,
+            0.5177
+          ],
+          [
+            -31,
+            0.5126
+          ],
+          [
+            -30,
+            0.528
+          ],
+          [
+            -29,
+            0.5235
+          ],
+          [
+            -28,
+            0.5404
+          ],
+          [
+            -27,
+            0.5159
+          ],
+          [
+            -26,
+            0.5213
+          ],
+          [
+            -25,
+            0.5349
+          ],
+          [
+            -24,
+            0.5048
+          ],
+          [
+            -23,
+            0.5293
+          ],
+          [
+            -22,
+            0.5488
+          ],
+          [
+            -21,
+            0.5173
+          ],
+          [
+            -20,
+            0.5042
+          ],
+          [
+            -19,
+            0.524
+          ],
+          [
+            -18,
+            0.5211
+          ],
+          [
+            -17,
+            0.5237
+          ],
+          [
+            -16,
+            0.5324
+          ],
+          [
+            -15,
+            0.5087
+          ],
+          [
+            -14,
+            0.5237
+          ],
+          [
+            -13,
+            0.5112
+          ],
+          [
+            -12,
+            0.5177
+          ],
+          [
+            -11,
+            0.5088
+          ],
+          [
+            -10,
+            0.5078
+          ],
+          [
+            -9,
+            0.536
+          ],
+          [
+            -8,
+            0.5092
+          ],
+          [
+            -7,
+            0.514
+          ],
+          [
+            -6,
+            0.5071
+          ],
+          [
+            -5,
+            0.5163
+          ],
+          [
+            -4,
+            0.5247
+          ],
+          [
+            -3,
+            0.5139
+          ],
+          [
+            -2,
+            0.5138
+          ],
+          [
+            -1,
+            0.5257
+          ],
+          [
+            0,
+            0.5155
+          ]
+        ],
+        "baseline": 0.5236,
+        "current": 0.5183,
+        "peak": 0.5488
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:p95_latency_ms",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend p95 latency ms: 179ms \u2192 226ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            174.1037
+          ],
+          [
+            -44,
+            187.2317
+          ],
+          [
+            -43,
+            193.9121
+          ],
+          [
+            -42,
+            164.4914
+          ],
+          [
+            -41,
+            177.9898
+          ],
+          [
+            -40,
+            181.3403
+          ],
+          [
+            -39,
+            185.2654
+          ],
+          [
+            -38,
+            179.4514
+          ],
+          [
+            -37,
+            194.12
+          ],
+          [
+            -36,
+            169.8615
+          ],
+          [
+            -35,
+            172.3112
+          ],
+          [
+            -34,
+            187.5308
+          ],
+          [
+            -33,
+            184.8762
+          ],
+          [
+            -32,
+            186.63
+          ],
+          [
+            -31,
+            167.3005
+          ],
+          [
+            -30,
+            228.3888
+          ],
+          [
+            -29,
+            232.2728
+          ],
+          [
+            -28,
+            231.3805
+          ],
+          [
+            -27,
+            282.0569
+          ],
+          [
+            -26,
+            349.3337
+          ],
+          [
+            -25,
+            193.2979
+          ],
+          [
+            -24,
+            205.514
+          ],
+          [
+            -23,
+            218.863
+          ],
+          [
+            -22,
+            274.7769
+          ],
+          [
+            -21,
+            291.2422
+          ],
+          [
+            -20,
+            277.8469
+          ],
+          [
+            -19,
+            336.4068
+          ],
+          [
+            -18,
+            173.1059
+          ],
+          [
+            -17,
+            223.3883
+          ],
+          [
+            -16,
+            207.6997
+          ],
+          [
+            -15,
+            237.4087
+          ],
+          [
+            -14,
+            255.8605
+          ],
+          [
+            -13,
+            282.1406
+          ],
+          [
+            -12,
+            341.7136
+          ],
+          [
+            -11,
+            159.8195
+          ],
+          [
+            -10,
+            211.0209
+          ],
+          [
+            -9,
+            211.9477
+          ],
+          [
+            -8,
+            252.8447
+          ],
+          [
+            -7,
+            242.3714
+          ],
+          [
+            -6,
+            288.3924
+          ],
+          [
+            -5,
+            281.6537
+          ],
+          [
+            -4,
+            168.572
+          ],
+          [
+            -3,
+            178.6402
+          ],
+          [
+            -2,
+            239.5502
+          ],
+          [
+            -1,
+            233.995
+          ],
+          [
+            0,
+            251.4909
+          ]
+        ],
+        "baseline": 179.4514,
+        "current": 225.6503,
+        "peak": 349.3337
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:request_rate",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend request rate: 46.6 req/s \u2192 44.9 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            42.3181
+          ],
+          [
+            -44,
+            44.907
+          ],
+          [
+            -43,
+            48.7365
+          ],
+          [
+            -42,
+            40.8533
+          ],
+          [
+            -41,
+            46.6172
+          ],
+          [
+            -40,
+            47.7865
+          ],
+          [
+            -39,
+            46.66
+          ],
+          [
+            -38,
+            48.8947
+          ],
+          [
+            -37,
+            44.3579
+          ],
+          [
+            -36,
+            47.059
+          ],
+          [
+            -35,
+            44.4051
+          ],
+          [
+            -34,
+            43.2886
+          ],
+          [
+            -33,
+            45.5216
+          ],
+          [
+            -32,
+            47.1581
+          ],
+          [
+            -31,
+            46.3764
+          ],
+          [
+            -30,
+            42.2626
+          ],
+          [
+            -29,
+            40.9974
+          ],
+          [
+            -28,
+            44.9867
+          ],
+          [
+            -27,
+            45.3897
+          ],
+          [
+            -26,
+            46.4257
+          ],
+          [
+            -25,
+            47.5329
+          ],
+          [
+            -24,
+            43.9045
+          ],
+          [
+            -23,
+            42.0773
+          ],
+          [
+            -22,
+            46.3734
+          ],
+          [
+            -21,
+            42.3435
+          ],
+          [
+            -20,
+            46.6265
+          ],
+          [
+            -19,
+            41.4674
+          ],
+          [
+            -18,
+            46.4537
+          ],
+          [
+            -17,
+            46.0321
+          ],
+          [
+            -16,
+            45.7075
+          ],
+          [
+            -15,
+            48.5777
+          ],
+          [
+            -14,
+            41.8161
+          ],
+          [
+            -13,
+            45.4909
+          ],
+          [
+            -12,
+            44.2259
+          ],
+          [
+            -11,
+            42.6389
+          ],
+          [
+            -10,
+            44.3177
+          ],
+          [
+            -9,
+            47.7563
+          ],
+          [
+            -8,
+            44.4618
+          ],
+          [
+            -7,
+            47.3905
+          ],
+          [
+            -6,
+            51.6385
+          ],
+          [
+            -5,
+            45.6301
+          ],
+          [
+            -4,
+            48.2131
+          ],
+          [
+            -3,
+            44.5917
+          ],
+          [
+            -2,
+            41.684
+          ],
+          [
+            -1,
+            43.5324
+          ],
+          [
+            0,
+            45.5926
+          ]
+        ],
+        "baseline": 46.6172,
+        "current": 44.874,
+        "peak": 51.6385
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:product-catalog:cpu_utilization",
+      "source": "metrics",
+      "service": "product-catalog",
+      "title": "product-catalog cpu utilization: 24.7% \u2192 25.5% (peak 27.5%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2439
+          ],
+          [
+            -44,
+            0.2513
+          ],
+          [
+            -43,
+            0.2595
+          ],
+          [
+            -42,
+            0.2514
+          ],
+          [
+            -41,
+            0.2286
+          ],
+          [
+            -40,
+            0.2572
+          ],
+          [
+            -39,
+            0.2327
+          ],
+          [
+            -38,
+            0.2452
+          ],
+          [
+            -37,
+            0.2473
+          ],
+          [
+            -36,
+            0.2423
+          ],
+          [
+            -35,
+            0.2751
+          ],
+          [
+            -34,
+            0.2489
+          ],
+          [
+            -33,
+            0.2366
+          ],
+          [
+            -32,
+            0.2637
+          ],
+          [
+            -31,
+            0.2571
+          ],
+          [
+            -30,
+            0.2541
+          ],
+          [
+            -29,
+            0.2696
+          ],
+          [
+            -28,
+            0.2684
+          ],
+          [
+            -27,
+            0.2246
+          ],
+          [
+            -26,
+            0.239
+          ],
+          [
+            -25,
+            0.2693
+          ],
+          [
+            -24,
+            0.2448
+          ],
+          [
+            -23,
+            0.2227
+          ],
+          [
+            -22,
+            0.2432
+          ],
+          [
+            -21,
+            0.2724
+          ],
+          [
+            -20,
+            0.2422
+          ],
+          [
+            -19,
+            0.2371
+          ],
+          [
+            -18,
+            0.2433
+          ],
+          [
+            -17,
+            0.2496
+          ],
+          [
+            -16,
+            0.2562
+          ],
+          [
+            -15,
+            0.2603
+          ],
+          [
+            -14,
+            0.2539
+          ],
+          [
+            -13,
+            0.2369
+          ],
+          [
+            -12,
+            0.2342
+          ],
+          [
+            -11,
+            0.2519
+          ],
+          [
+            -10,
+            0.2278
+          ],
+          [
+            -9,
+            0.2305
+          ],
+          [
+            -8,
+            0.2465
+          ],
+          [
+            -7,
+            0.2415
+          ],
+          [
+            -6,
+            0.2496
+          ],
+          [
+            -5,
+            0.2516
+          ],
+          [
+            -4,
+            0.2539
+          ],
+          [
+            -3,
+            0.2715
+          ],
+          [
+            -2,
+            0.226
+          ],
+          [
+            -1,
+            0.2711
+          ],
+          [
+            0,
+            0.2561
+          ]
+        ],
+        "baseline": 0.2473,
+        "current": 0.255,
+        "peak": 0.2751
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:product-catalog:error_rate",
+      "source": "metrics",
+      "service": "product-catalog",
+      "title": "product-catalog error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0053
+          ],
+          [
+            -44,
+            0.0046
+          ],
+          [
+            -43,
+            0.0046
+          ],
+          [
+            -42,
+            0.0038
+          ],
+          [
+            -41,
+            0.0038
+          ],
+          [
+            -40,
+            0.0036
+          ],
+          [
+            -39,
+            0.0043
+          ],
+          [
+            -38,
+            0.0049
+          ],
+          [
+            -37,
+            0.0044
+          ],
+          [
+            -36,
+            0.0039
+          ],
+          [
+            -35,
+            0.0035
+          ],
+          [
+            -34,
+            0.005
+          ],
+          [
+            -33,
+            0.004
+          ],
+          [
+            -32,
+            0.0043
+          ],
+          [
+            -31,
+            0.0041
+          ],
+          [
+            -30,
+            0.0038
+          ],
+          [
+            -29,
+            0.0035
+          ],
+          [
+            -28,
+            0.0044
+          ],
+          [
+            -27,
+            0.0034
+          ],
+          [
+            -26,
+            0.0045
+          ],
+          [
+            -25,
+            0.0035
+          ],
+          [
+            -24,
+            0.004
+          ],
+          [
+            -23,
+            0.0039
+          ],
+          [
+            -22,
+            0.0036
+          ],
+          [
+            -21,
+            0.0043
+          ],
+          [
+            -20,
+            0.0024
+          ],
+          [
+            -19,
+            0.0052
+          ],
+          [
+            -18,
+            0.003
+          ],
+          [
+            -17,
+            0.0041
+          ],
+          [
+            -16,
+            0.0032
+          ],
+          [
+            -15,
+            0.0042
+          ],
+          [
+            -14,
+            0.0042
+          ],
+          [
+            -13,
+            0.0039
+          ],
+          [
+            -12,
+            0.0029
+          ],
+          [
+            -11,
+            0.0055
+          ],
+          [
+            -10,
+            0.0046
+          ],
+          [
+            -9,
+            0.0049
+          ],
+          [
+            -8,
+            0.0037
+          ],
+          [
+            -7,
+            0.0036
+          ],
+          [
+            -6,
+            0.0046
+          ],
+          [
+            -5,
+            0.0035
+          ],
+          [
+            -4,
+            0.0038
+          ],
+          [
+            -3,
+            0.0033
+          ],
+          [
+            -2,
+            0.0043
+          ],
+          [
+            -1,
+            0.0023
+          ],
+          [
+            0,
+            0.0039
+          ]
+        ],
+        "baseline": 0.0043,
+        "current": 0.0035,
+        "peak": 0.0055
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:product-catalog:memory_utilization",
+      "source": "metrics",
+      "service": "product-catalog",
+      "title": "product-catalog memory utilization: 36.0% \u2192 36.1% (peak 37.6%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3586
+          ],
+          [
+            -44,
+            0.376
+          ],
+          [
+            -43,
+            0.3605
+          ],
+          [
+            -42,
+            0.3545
+          ],
+          [
+            -41,
+            0.3721
+          ],
+          [
+            -40,
+            0.3589
+          ],
+          [
+            -39,
+            0.3551
+          ],
+          [
+            -38,
+            0.3652
+          ],
+          [
+            -37,
+            0.3663
+          ],
+          [
+            -36,
+            0.3618
+          ],
+          [
+            -35,
+            0.3604
+          ],
+          [
+            -34,
+            0.3495
+          ],
+          [
+            -33,
+            0.3618
+          ],
+          [
+            -32,
+            0.376
+          ],
+          [
+            -31,
+            0.3596
+          ],
+          [
+            -30,
+            0.3609
+          ],
+          [
+            -29,
+            0.3529
+          ],
+          [
+            -28,
+            0.3485
+          ],
+          [
+            -27,
+            0.3639
+          ],
+          [
+            -26,
+            0.3585
+          ],
+          [
+            -25,
+            0.3504
+          ],
+          [
+            -24,
+            0.3435
+          ],
+          [
+            -23,
+            0.3513
+          ],
+          [
+            -22,
+            0.3512
+          ],
+          [
+            -21,
+            0.3531
+          ],
+          [
+            -20,
+            0.3567
+          ],
+          [
+            -19,
+            0.3546
+          ],
+          [
+            -18,
+            0.3655
+          ],
+          [
+            -17,
+            0.3651
+          ],
+          [
+            -16,
+            0.3617
+          ],
+          [
+            -15,
+            0.3671
+          ],
+          [
+            -14,
+            0.3588
+          ],
+          [
+            -13,
+            0.359
+          ],
+          [
+            -12,
+            0.3533
+          ],
+          [
+            -11,
+            0.3653
+          ],
+          [
+            -10,
+            0.3573
+          ],
+          [
+            -9,
+            0.3546
+          ],
+          [
+            -8,
+            0.3682
+          ],
+          [
+            -7,
+            0.3594
+          ],
+          [
+            -6,
+            0.3487
+          ],
+          [
+            -5,
+            0.3715
+          ],
+          [
+            -4,
+            0.3547
+          ],
+          [
+            -3,
+            0.3575
+          ],
+          [
+            -2,
+            0.3652
+          ],
+          [
+            -1,
+            0.3679
+          ],
+          [
+            0,
+            0.3501
+          ]
+        ],
+        "baseline": 0.3605,
+        "current": 0.3612,
+        "peak": 0.376
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:product-catalog:p95_latency_ms",
+      "source": "metrics",
+      "service": "product-catalog",
+      "title": "product-catalog p95 latency ms: 17ms \u2192 18ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            17.8614
+          ],
+          [
+            -44,
+            16.4696
+          ],
+          [
+            -43,
+            18.5956
+          ],
+          [
+            -42,
+            17.4414
+          ],
+          [
+            -41,
+            16.7581
+          ],
+          [
+            -40,
+            17.7656
+          ],
+          [
+            -39,
+            20.3402
+          ],
+          [
+            -38,
+            16.8061
+          ],
+          [
+            -37,
+            17.3675
+          ],
+          [
+            -36,
+            16.8714
+          ],
+          [
+            -35,
+            18.9477
+          ],
+          [
+            -34,
+            18.5724
+          ],
+          [
+            -33,
+            17.7236
+          ],
+          [
+            -32,
+            18.6703
+          ],
+          [
+            -31,
+            18.8402
+          ],
+          [
+            -30,
+            18.4179
+          ],
+          [
+            -29,
+            20.2301
+          ],
+          [
+            -28,
+            16.8375
+          ],
+          [
+            -27,
+            16.7573
+          ],
+          [
+            -26,
+            18.681
+          ],
+          [
+            -25,
+            17.6764
+          ],
+          [
+            -24,
+            17.8438
+          ],
+          [
+            -23,
+            19.0908
+          ],
+          [
+            -22,
+            19.5073
+          ],
+          [
+            -21,
+            19.2617
+          ],
+          [
+            -20,
+            19.2234
+          ],
+          [
+            -19,
+            17.7362
+          ],
+          [
+            -18,
+            14.9504
+          ],
+          [
+            -17,
+            19.9962
+          ],
+          [
+            -16,
+            17.6918
+          ],
+          [
+            -15,
+            18.9476
+          ],
+          [
+            -14,
+            17.5004
+          ],
+          [
+            -13,
+            16.725
+          ],
+          [
+            -12,
+            16.1356
+          ],
+          [
+            -11,
+            17.1807
+          ],
+          [
+            -10,
+            17.047
+          ],
+          [
+            -9,
+            17.2047
+          ],
+          [
+            -8,
+            18.2187
+          ],
+          [
+            -7,
+            18.7616
+          ],
+          [
+            -6,
+            15.9507
+          ],
+          [
+            -5,
+            16.4753
+          ],
+          [
+            -4,
+            16.6372
+          ],
+          [
+            -3,
+            19.8219
+          ],
+          [
+            -2,
+            17.3826
+          ],
+          [
+            -1,
+            19.3087
+          ],
+          [
+            0,
+            18.9903
+          ]
+        ],
+        "baseline": 17.4414,
+        "current": 18.1027,
+        "peak": 20.3402
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:product-catalog:request_rate",
+      "source": "metrics",
+      "service": "product-catalog",
+      "title": "product-catalog request rate: 51.9 req/s \u2192 50.9 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            51.3079
+          ],
+          [
+            -44,
+            46.5742
+          ],
+          [
+            -43,
+            51.6579
+          ],
+          [
+            -42,
+            54.0289
+          ],
+          [
+            -41,
+            52.228
+          ],
+          [
+            -40,
+            51.9276
+          ],
+          [
+            -39,
+            51.8138
+          ],
+          [
+            -38,
+            53.923
+          ],
+          [
+            -37,
+            52.4773
+          ],
+          [
+            -36,
+            46.4345
+          ],
+          [
+            -35,
+            56.9611
+          ],
+          [
+            -34,
+            51.2289
+          ],
+          [
+            -33,
+            52.8099
+          ],
+          [
+            -32,
+            51.6452
+          ],
+          [
+            -31,
+            50.1292
+          ],
+          [
+            -30,
+            54.647
+          ],
+          [
+            -29,
+            50.6278
+          ],
+          [
+            -28,
+            50.9452
+          ],
+          [
+            -27,
+            52.2059
+          ],
+          [
+            -26,
+            48.2942
+          ],
+          [
+            -25,
+            48.9286
+          ],
+          [
+            -24,
+            53.1907
+          ],
+          [
+            -23,
+            46.2835
+          ],
+          [
+            -22,
+            51.8199
+          ],
+          [
+            -21,
+            56.2857
+          ],
+          [
+            -20,
+            52.6048
+          ],
+          [
+            -19,
+            50.0865
+          ],
+          [
+            -18,
+            51.4439
+          ],
+          [
+            -17,
+            49.2449
+          ],
+          [
+            -16,
+            48.0265
+          ],
+          [
+            -15,
+            47.8231
+          ],
+          [
+            -14,
+            53.8647
+          ],
+          [
+            -13,
+            46.5127
+          ],
+          [
+            -12,
+            51.352
+          ],
+          [
+            -11,
+            50.3215
+          ],
+          [
+            -10,
+            49.2652
+          ],
+          [
+            -9,
+            50.3584
+          ],
+          [
+            -8,
+            49.1616
+          ],
+          [
+            -7,
+            47.0066
+          ],
+          [
+            -6,
+            56.2146
+          ],
+          [
+            -5,
+            48.5458
+          ],
+          [
+            -4,
+            50.6213
+          ],
+          [
+            -3,
+            52.0379
+          ],
+          [
+            -2,
+            51.0076
+          ],
+          [
+            -1,
+            49.4568
+          ],
+          [
+            0,
+            53.9348
+          ]
+        ],
+        "baseline": 51.9276,
+        "current": 50.934,
+        "peak": 56.9611
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:recommendation:cpu_utilization",
+      "source": "metrics",
+      "service": "recommendation",
+      "title": "recommendation cpu utilization: 20.0% \u2192 32.7% (peak 51.3%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1932
+          ],
+          [
+            -44,
+            0.1928
+          ],
+          [
+            -43,
+            0.1952
+          ],
+          [
+            -42,
+            0.1945
+          ],
+          [
+            -41,
+            0.1997
+          ],
+          [
+            -40,
+            0.2115
+          ],
+          [
+            -39,
+            0.2174
+          ],
+          [
+            -38,
+            0.2002
+          ],
+          [
+            -37,
+            0.204
+          ],
+          [
+            -36,
+            0.2034
+          ],
+          [
+            -35,
+            0.2061
+          ],
+          [
+            -34,
+            0.2135
+          ],
+          [
+            -33,
+            0.213
+          ],
+          [
+            -32,
+            0.2147
+          ],
+          [
+            -31,
+            0.233
+          ],
+          [
+            -30,
+            0.2826
+          ],
+          [
+            -29,
+            0.3319
+          ],
+          [
+            -28,
+            0.4018
+          ],
+          [
+            -27,
+            0.4603
+          ],
+          [
+            -26,
+            0.5126
+          ],
+          [
+            -25,
+            0.1884
+          ],
+          [
+            -24,
+            0.2683
+          ],
+          [
+            -23,
+            0.2931
+          ],
+          [
+            -22,
+            0.3436
+          ],
+          [
+            -21,
+            0.3718
+          ],
+          [
+            -20,
+            0.4164
+          ],
+          [
+            -19,
+            0.4832
+          ],
+          [
+            -18,
+            0.2162
+          ],
+          [
+            -17,
+            0.248
+          ],
+          [
+            -16,
+            0.3192
+          ],
+          [
+            -15,
+            0.3469
+          ],
+          [
+            -14,
+            0.4023
+          ],
+          [
+            -13,
+            0.469
+          ],
+          [
+            -12,
+            0.5097
+          ],
+          [
+            -11,
+            0.1839
+          ],
+          [
+            -10,
+            0.2725
+          ],
+          [
+            -9,
+            0.2965
+          ],
+          [
+            -8,
+            0.3393
+          ],
+          [
+            -7,
+            0.362
+          ],
+          [
+            -6,
+            0.4225
+          ],
+          [
+            -5,
+            0.4505
+          ],
+          [
+            -4,
+            0.1825
+          ],
+          [
+            -3,
+            0.2501
+          ],
+          [
+            -2,
+            0.3071
+          ],
+          [
+            -1,
+            0.3641
+          ],
+          [
+            0,
+            0.4067
+          ]
+        ],
+        "baseline": 0.2002,
+        "current": 0.3268,
+        "peak": 0.5126
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:recommendation:error_rate",
+      "source": "metrics",
+      "service": "recommendation",
+      "title": "recommendation error rate: 0.4% \u2192 8.6%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0033
+          ],
+          [
+            -44,
+            0.0037
+          ],
+          [
+            -43,
+            0.0039
+          ],
+          [
+            -42,
+            0.0051
+          ],
+          [
+            -41,
+            0.0054
+          ],
+          [
+            -40,
+            0.0048
+          ],
+          [
+            -39,
+            0.0037
+          ],
+          [
+            -38,
+            0.0033
+          ],
+          [
+            -37,
+            0.0045
+          ],
+          [
+            -36,
+            0.0041
+          ],
+          [
+            -35,
+            0.0041
+          ],
+          [
+            -34,
+            0.0039
+          ],
+          [
+            -33,
+            0.005
+          ],
+          [
+            -32,
+            0.0023
+          ],
+          [
+            -31,
+            0.004
+          ],
+          [
+            -30,
+            0.0048
+          ],
+          [
+            -29,
+            0.0042
+          ],
+          [
+            -28,
+            0.0048
+          ],
+          [
+            -27,
+            0.0049
+          ],
+          [
+            -26,
+            0.0042
+          ],
+          [
+            -25,
+            0.2325
+          ],
+          [
+            -24,
+            0.278
+          ],
+          [
+            -23,
+            0.0047
+          ],
+          [
+            -22,
+            0.0039
+          ],
+          [
+            -21,
+            0.0039
+          ],
+          [
+            -20,
+            0.0042
+          ],
+          [
+            -19,
+            0.003
+          ],
+          [
+            -18,
+            0.2752
+          ],
+          [
+            -17,
+            0.2552
+          ],
+          [
+            -16,
+            0.0047
+          ],
+          [
+            -15,
+            0.0037
+          ],
+          [
+            -14,
+            0.0038
+          ],
+          [
+            -13,
+            0.0045
+          ],
+          [
+            -12,
+            0.0039
+          ],
+          [
+            -11,
+            0.2546
+          ],
+          [
+            -10,
+            0.2434
+          ],
+          [
+            -9,
+            0.0042
+          ],
+          [
+            -8,
+            0.0037
+          ],
+          [
+            -7,
+            0.0038
+          ],
+          [
+            -6,
+            0.0039
+          ],
+          [
+            -5,
+            0.0047
+          ],
+          [
+            -4,
+            0.2275
+          ],
+          [
+            -3,
+            0.2692
+          ],
+          [
+            -2,
+            0.0037
+          ],
+          [
+            -1,
+            0.0033
+          ],
+          [
+            0,
+            0.0048
+          ]
+        ],
+        "baseline": 0.0041,
+        "current": 0.0855,
+        "peak": 0.278
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:recommendation:memory_utilization",
+      "source": "metrics",
+      "service": "recommendation",
+      "title": "recommendation memory utilization: 47.1% \u2192 68.0% (peak 95.3%)",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.4699
+          ],
+          [
+            -44,
+            0.4771
+          ],
+          [
+            -43,
+            0.4842
+          ],
+          [
+            -42,
+            0.4908
+          ],
+          [
+            -41,
+            0.448
+          ],
+          [
+            -40,
+            0.4844
+          ],
+          [
+            -39,
+            0.4714
+          ],
+          [
+            -38,
+            0.4847
+          ],
+          [
+            -37,
+            0.4552
+          ],
+          [
+            -36,
+            0.4712
+          ],
+          [
+            -35,
+            0.4629
+          ],
+          [
+            -34,
+            0.49
+          ],
+          [
+            -33,
+            0.4744
+          ],
+          [
+            -32,
+            0.4636
+          ],
+          [
+            -31,
+            0.542
+          ],
+          [
+            -30,
+            0.6228
+          ],
+          [
+            -29,
+            0.7
+          ],
+          [
+            -28,
+            0.7731
+          ],
+          [
+            -27,
+            0.8572
+          ],
+          [
+            -26,
+            0.9201
+          ],
+          [
+            -25,
+            0.4704
+          ],
+          [
+            -24,
+            0.5462
+          ],
+          [
+            -23,
+            0.6217
+          ],
+          [
+            -22,
+            0.6942
+          ],
+          [
+            -21,
+            0.7742
+          ],
+          [
+            -20,
+            0.851
+          ],
+          [
+            -19,
+            0.9201
+          ],
+          [
+            -18,
+            0.4696
+          ],
+          [
+            -17,
+            0.5564
+          ],
+          [
+            -16,
+            0.6196
+          ],
+          [
+            -15,
+            0.6955
+          ],
+          [
+            -14,
+            0.7435
+          ],
+          [
+            -13,
+            0.8516
+          ],
+          [
+            -12,
+            0.9533
+          ],
+          [
+            -11,
+            0.4755
+          ],
+          [
+            -10,
+            0.5597
+          ],
+          [
+            -9,
+            0.6001
+          ],
+          [
+            -8,
+            0.6623
+          ],
+          [
+            -7,
+            0.7463
+          ],
+          [
+            -6,
+            0.8497
+          ],
+          [
+            -5,
+            0.9195
+          ],
+          [
+            -4,
+            0.4715
+          ],
+          [
+            -3,
+            0.5576
+          ],
+          [
+            -2,
+            0.6169
+          ],
+          [
+            -1,
+            0.7163
+          ],
+          [
+            0,
+            0.7959
+          ]
+        ],
+        "baseline": 0.4714,
+        "current": 0.6796,
+        "peak": 0.9533
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:recommendation:p95_latency_ms",
+      "source": "metrics",
+      "service": "recommendation",
+      "title": "recommendation p95 latency ms: 55ms \u2192 175ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            56.2772
+          ],
+          [
+            -44,
+            63.8418
+          ],
+          [
+            -43,
+            50.6082
+          ],
+          [
+            -42,
+            54.4001
+          ],
+          [
+            -41,
+            53.6142
+          ],
+          [
+            -40,
+            61.4913
+          ],
+          [
+            -39,
+            54.7641
+          ],
+          [
+            -38,
+            55.8608
+          ],
+          [
+            -37,
+            53.3078
+          ],
+          [
+            -36,
+            55.2682
+          ],
+          [
+            -35,
+            53.7675
+          ],
+          [
+            -34,
+            54.3668
+          ],
+          [
+            -33,
+            61.9644
+          ],
+          [
+            -32,
+            51.6137
+          ],
+          [
+            -31,
+            92.6013
+          ],
+          [
+            -30,
+            141.8863
+          ],
+          [
+            -29,
+            208.5777
+          ],
+          [
+            -28,
+            223.7422
+          ],
+          [
+            -27,
+            255.9762
+          ],
+          [
+            -26,
+            312.8624
+          ],
+          [
+            -25,
+            61.7493
+          ],
+          [
+            -24,
+            93.77
+          ],
+          [
+            -23,
+            127.3693
+          ],
+          [
+            -22,
+            182.3635
+          ],
+          [
+            -21,
+            240.0872
+          ],
+          [
+            -20,
+            275.7678
+          ],
+          [
+            -19,
+            280.4304
+          ],
+          [
+            -18,
+            50.7726
+          ],
+          [
+            -17,
+            94.3602
+          ],
+          [
+            -16,
+            147.8354
+          ],
+          [
+            -15,
+            158.9596
+          ],
+          [
+            -14,
+            248.6227
+          ],
+          [
+            -13,
+            269.2964
+          ],
+          [
+            -12,
+            314.6716
+          ],
+          [
+            -11,
+            55.2598
+          ],
+          [
+            -10,
+            95.6161
+          ],
+          [
+            -9,
+            142.6914
+          ],
+          [
+            -8,
+            198.9727
+          ],
+          [
+            -7,
+            244.0545
+          ],
+          [
+            -6,
+            269.4702
+          ],
+          [
+            -5,
+            340.2893
+          ],
+          [
+            -4,
+            60.0723
+          ],
+          [
+            -3,
+            98.8604
+          ],
+          [
+            -2,
+            143.4327
+          ],
+          [
+            -1,
+            179.5707
+          ],
+          [
+            0,
+            225.0845
+          ]
+        ],
+        "baseline": 54.7641,
+        "current": 174.5516,
+        "peak": 340.2893
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:recommendation:request_rate",
+      "source": "metrics",
+      "service": "recommendation",
+      "title": "recommendation request rate: 17.8 req/s \u2192 18.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            15.9356
+          ],
+          [
+            -44,
+            16.3661
+          ],
+          [
+            -43,
+            17.449
+          ],
+          [
+            -42,
+            17.5232
+          ],
+          [
+            -41,
+            19.5135
+          ],
+          [
+            -40,
+            18.3342
+          ],
+          [
+            -39,
+            17.849
+          ],
+          [
+            -38,
+            18.0618
+          ],
+          [
+            -37,
+            17.5055
+          ],
+          [
+            -36,
+            18.1699
+          ],
+          [
+            -35,
+            18.3918
+          ],
+          [
+            -34,
+            19.0791
+          ],
+          [
+            -33,
+            18.4879
+          ],
+          [
+            -32,
+            16.6274
+          ],
+          [
+            -31,
+            17.7174
+          ],
+          [
+            -30,
+            16.3021
+          ],
+          [
+            -29,
+            17.4861
+          ],
+          [
+            -28,
+            18.2651
+          ],
+          [
+            -27,
+            19.5952
+          ],
+          [
+            -26,
+            17.9438
+          ],
+          [
+            -25,
+            16.9577
+          ],
+          [
+            -24,
+            17.3956
+          ],
+          [
+            -23,
+            18.509
+          ],
+          [
+            -22,
+            19.5047
+          ],
+          [
+            -21,
+            17.8142
+          ],
+          [
+            -20,
+            18.8768
+          ],
+          [
+            -19,
+            17.0802
+          ],
+          [
+            -18,
+            18.5886
+          ],
+          [
+            -17,
+            16.9492
+          ],
+          [
+            -16,
+            18.8864
+          ],
+          [
+            -15,
+            17.8219
+          ],
+          [
+            -14,
+            19.5742
+          ],
+          [
+            -13,
+            18.2832
+          ],
+          [
+            -12,
+            18.3719
+          ],
+          [
+            -11,
+            18.3404
+          ],
+          [
+            -10,
+            18.3322
+          ],
+          [
+            -9,
+            16.6592
+          ],
+          [
+            -8,
+            17.4374
+          ],
+          [
+            -7,
+            19.3269
+          ],
+          [
+            -6,
+            17.8805
+          ],
+          [
+            -5,
+            18.825
+          ],
+          [
+            -4,
+            17.5978
+          ],
+          [
+            -3,
+            17.9364
+          ],
+          [
+            -2,
+            17.3942
+          ],
+          [
+            -1,
+            18.5571
+          ],
+          [
+            0,
+            18.4519
+          ]
+        ],
+        "baseline": 17.849,
+        "current": 18.1271,
+        "peak": 19.5952
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend:f01e4502ed8e",
+      "source": "traces",
+      "service": "recommendation",
+      "title": "Failing trace f01e4502ed8e: frontend \u2192 recommendation",
+      "detail": "MemoryError: cache grew to 1.9GiB",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "f01e4502ed8e10e137f150c3b3f3e7ac",
+        "spans": [
+          {
+            "service": "frontend",
+            "operation": "frontend/handle",
+            "duration_ms": 158.1,
+            "error": true,
+            "message": "rpc error calling recommendation: code = Internal",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "recommendation",
+            "operation": "recommendation/handle",
+            "duration_ms": 156.5,
+            "error": true,
+            "message": "MemoryError: cache grew to 1.9GiB",
+            "depth": 1,
+            "kind": "server"
+          }
+        ],
+        "origin": "recommendation"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend:summary",
+      "source": "traces",
+      "service": "frontend",
+      "title": "6/200 sampled frontend traces failed in the last 5m; top error origin: recommendation",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 6,
+        "error_origins": {
+          "recommendation": 5,
+          "shipping": 1
+        },
+        "latency_contributors_ms": {
+          "recommendation": 54.9
+        },
+        "p95_ms": 234.9
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:product-catalog:summary",
+      "source": "traces",
+      "service": "product-catalog",
+      "title": "1/200 sampled product-catalog traces failed in the last 5m; top error origin: product-catalog",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 1,
+        "error_origins": {
+          "product-catalog": 1
+        },
+        "latency_contributors_ms": {},
+        "p95_ms": 18.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:recommendation:19d80edac305",
+      "source": "traces",
+      "service": "recommendation",
+      "title": "Failing trace 19d80edac305: recommendation",
+      "detail": "MemoryError: cache grew to 1.9GiB",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "19d80edac305f1ec1e178ba6053e9047",
+        "spans": [
+          {
+            "service": "recommendation",
+            "operation": "recommendation/handle",
+            "duration_ms": 164.0,
+            "error": true,
+            "message": "MemoryError: cache grew to 1.9GiB",
+            "depth": 0,
+            "kind": "server"
+          }
+        ],
+        "origin": "recommendation"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:recommendation:summary",
+      "source": "traces",
+      "service": "recommendation",
+      "title": "17/200 sampled recommendation traces failed in the last 5m; top error origin: recommendation",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 17,
+        "error_origins": {
+          "recommendation": 16,
+          "product-catalog": 1
+        },
+        "latency_contributors_ms": {
+          "recommendation": 114.3
+        },
+        "p95_ms": 169.3
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_error_origin",
+      "service": "recommendation",
+      "score": 3.294,
+      "summary": "94% of failing recommendation traces end in recommendation",
+      "evidence_ids": [
+        "traces:recommendation:summary"
+      ],
+      "data": {
+        "share": 0.9411764705882353,
+        "count": 16
+      }
+    },
+    {
+      "kind": "trace_latency_origin",
+      "service": "recommendation",
+      "score": 3.0,
+      "summary": "recommendation accounts for 100% of added latency in recommendation traces (+114ms)",
+      "evidence_ids": [
+        "traces:recommendation:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 114.3
+      }
+    },
+    {
+      "kind": "trace_error_origin",
+      "service": "recommendation",
+      "score": 2.917,
+      "summary": "83% of failing frontend traces end in recommendation",
+      "evidence_ids": [
+        "traces:frontend:summary"
+      ],
+      "data": {
+        "share": 0.8333333333333334,
+        "count": 5
+      }
+    },
+    {
+      "kind": "oom_killed",
+      "service": "recommendation",
+      "score": 2.5,
+      "summary": "pod/recommendation-5abdfa8c-073cd OOMKilled, 4 restarts",
+      "evidence_ids": [
+        "k8s:recommendation:pod_status"
+      ],
+      "data": {
+        "restarts": 4
+      }
+    },
+    {
+      "kind": "memory_pressure",
+      "service": "recommendation",
+      "score": 1.2,
+      "summary": "recommendation memory peaked at 95% of limit",
+      "evidence_ids": [
+        "metrics:recommendation:memory_utilization"
+      ],
+      "data": {
+        "peak": 0.9533
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "recommendation",
+      "score": 1.0,
+      "summary": "recommendation error rate 0.4% \u2192 8.6%",
+      "evidence_ids": [
+        "metrics:recommendation:error_rate"
+      ],
+      "data": {
+        "baseline": 0.0041,
+        "current": 0.0855
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "recommendation",
+      "score": 0.8,
+      "summary": "recommendation p95 55ms \u2192 175ms",
+      "evidence_ids": [
+        "metrics:recommendation:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 54.7641,
+        "current": 174.5516
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "frontend",
+      "score": 0.6,
+      "summary": "frontend error rate 0.4% \u2192 3.4%",
+      "evidence_ids": [
+        "metrics:frontend:error_rate"
+      ],
+      "data": {
+        "baseline": 0.0042,
+        "current": 0.0338
+      }
+    },
+    {
+      "kind": "memory_pressure",
+      "service": "recommendation",
+      "score": 0.6,
+      "summary": "recommendation: heap usage above 90% after full GC",
+      "evidence_ids": [
+        "logs:recommendation:1"
+      ],
+      "data": {}
+    },
+    {
+      "kind": "trace_error_origin",
+      "service": "shipping",
+      "score": 0.583,
+      "summary": "17% of failing frontend traces end in shipping",
+      "evidence_ids": [
+        "traces:frontend:summary"
+      ],
+      "data": {
+        "share": 0.16666666666666666,
+        "count": 1
+      }
+    },
+    {
+      "kind": "downstream_errors",
+      "service": "recommendation",
+      "score": 0.4,
+      "summary": "frontend logs 2,448 errors calling recommendation",
+      "evidence_ids": [
+        "logs:frontend:1"
+      ],
+      "data": {
+        "caller": "frontend"
+      }
+    },
+    {
+      "kind": "restarts",
+      "service": "currency",
+      "score": 0.3,
+      "summary": "pod/currency-5242c472-46622 restarted 1\u00d7",
+      "evidence_ids": [
+        "k8s:currency:pod_status"
+      ],
+      "data": {}
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-05-04",
+      "title": "Recommendation OOM loop from an unbounded product cache",
+      "type": "postmortem",
+      "services": [
+        "recommendation",
+        "frontend"
+      ],
+      "category": "memory_leak",
+      "date": "2026-05-04",
+      "snippet": "## Summary Recommendation was OOMKilled every ~7 minutes for two hours. Each restart dropped in-flight requests, so frontend saw periodic bursts of 5xx. Memory grew linearly from ~45% to 100% of the limit between restarts (sawtooth). ## Root cause An in-process cache keyed by product-id list had no eviction. The `recommendationCacheFailure` flag reproduces this. ## Resolution Restarted the deploym\u2026",
+      "score": 56.811
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 18.027
+    },
+    {
+      "id": "RB-oom",
+      "title": "Pods restarting with OOMKilled",
+      "type": "runbook",
+      "services": [
+        "*"
+      ],
+      "category": "memory_leak",
+      "date": null,
+      "snippet": "Signs: `lastState.terminated.reason=OOMKilled`, sawtooth memory, restarts increasing. 1. `kubectl -n otel-demo describe pod <pod>` and check Last State. 2. Is memory growth linear between restarts (leak) or a step after a deploy (new baseline)? 3. Mitigate: `kubectl -n otel-demo rollout restart deployment/<svc>` or raise the limit temporarily. 4. Capture a heap profile before the next OOM (pprof /\u2026",
+      "score": 14.892
+    },
+    {
+      "id": "PM-2026-07-09",
+      "title": "Shipping failed after a quote address change",
+      "type": "postmortem",
+      "services": [
+        "shipping",
+        "quote",
+        "checkout"
+      ],
+      "category": "config_change",
+      "date": "2026-07-09",
+      "snippet": "## Summary A Helm values change renamed the quote service address. Shipping could not resolve `quote-svc` and 90% of checkouts failed at the shipping step with `dns error`. ## Root cause Configuration change on shipping (QUOTE_ADDR). Quote itself was healthy and idle. ## Resolution Reverted the env var and redeployed shipping. ## Lessons - `no such host` / `dns error` in a caller plus an idle call\u2026",
+      "score": 13.548
+    },
+    {
+      "id": "PM-2026-01-20",
+      "title": "Payment 1.7.3 release failed card charges with a TypeError",
+      "type": "postmortem",
+      "services": [
+        "payment",
+        "checkout"
+      ],
+      "category": "bad_deploy",
+      "date": "2026-01-20",
+      "snippet": "## Summary A payment release changed the shape of the `amount` object. 35% of charges failed with `TypeError: Cannot read properties of undefined (reading 'units')`. Checkout's error-rate alert fired 9 minutes after rollout. ## Root cause Bad deploy. The new code assumed `amount.units` was always set; older clients sent `amount.nanos` only. ## Resolution `kubectl rollout undo deployment/payment`. \u2026",
+      "score": 13.089
+    }
+  ],
+  "services_examined": [
+    "frontend",
+    "recommendation",
+    "product-catalog"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "recommendation",
+    "expected_category": "memory_leak",
+    "predicted_service": "recommendation",
+    "predicted_category": "memory_leak",
+    "confidence": 0.92
+  },
+  "slack_posted": false
+}

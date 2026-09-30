@@ -1,0 +1,5779 @@
+{
+  "id": "81ce11a9c17a",
+  "alert": {
+    "name": "FrontendProxyHighErrorRate",
+    "service": "frontend-proxy",
+    "severity": "critical",
+    "summary": "frontend-proxy 5xx ratio > 2% for 5m",
+    "labels": {
+      "scenario_id": "frontend-bad-deploy"
+    },
+    "starts_at": "2026-09-30T02:52:22.859206Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "frontend-bad-deploy",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:52:22.860093Z",
+  "completed_at": "2026-09-30T02:52:53.062355Z",
+  "duration_ms": 30201,
+  "hypothesis": {
+    "root_cause_service": "frontend",
+    "category": "bad_deploy",
+    "title": "frontend 2.0.4 rollout throws TypeError on null currencyCode in ProductPrice.tsx",
+    "summary": "Frontend deployment 2.0.4 rolled out 9 minutes before the alert and introduced a TypeError in ProductPrice.tsx:22 when attempting to read 'currencyCode' from a null object. This error occurs on product pages and propagates as 5xx responses upstream to frontend-proxy, causing the alert to fire. The error rate jumped from 0.4% to ~7% in both frontend and frontend-proxy. Traces confirm frontend is the origin of 92-93% of failures.",
+    "reasoning": "The alert fired on frontend-proxy with a 5xx spike from 0.4% to 6.1%. Traces show that 92% of failing frontend-proxy traces end in the frontend service, and 93% of failing frontend traces also end in frontend itself. The deepest error in multiple traces is \"TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22\". This error appears 1,701 times in frontend logs starting 9 minutes before the alert, which coincides exactly with the frontend deployment rollout from 2.0.3 to 2.0.4 (also 9 minutes before the alert). The error is a JavaScript null-pointer dereference in a React component that renders product prices, indicating the frontend code is trying to access a currencyCode property on a null object. The ad service also deployed 2.0.2 \u2192 2.0.3 at the same time, but ad's own error rate remains stable at 0.4% and its metrics are healthy, so that deployment is a red herring. The currency config change (DEFAULT_CURRENCY 'USD' \u2192 'USD') is a no-op. The cart gRPC message-size errors started 44 minutes before the alert and predate the incident. The recommendation pod restart (exit 137, OOMKilled) is unrelated since recommendation is not on the failing trace paths. This matches the pattern of PM-2026-01-20 (bad deploy causing TypeError) and PM-2026-08-02 (bad release breaking currency integration). The root cause is the frontend 2.0.4 deployment introducing a bug in ProductPrice.tsx.",
+    "confidence": 0.92,
+    "supporting_evidence": [
+      {
+        "evidence_id": "changes:frontend:deploy:0",
+        "why_it_matters": "Frontend rolled out version 2.0.4 exactly 9 minutes before the alert, matching the timing of the first error logs and the error-rate spike."
+      },
+      {
+        "evidence_id": "logs:frontend:1",
+        "why_it_matters": "1,701 occurrences of 'TypeError: Cannot read properties of null (reading currencyCode) at ProductPrice.tsx:22' starting 9 minutes before the alert, pinpointing the code defect introduced in the new release."
+      },
+      {
+        "evidence_id": "traces:frontend-proxy:9c01992b540d",
+        "why_it_matters": "Failing trace shows the error originates in the frontend service span with the same TypeError, confirming frontend is the source, not just a symptom."
+      },
+      {
+        "evidence_id": "traces:frontend:summary",
+        "why_it_matters": "93% of failing frontend traces end in frontend itself, proving the fault is internal to frontend rather than a downstream dependency."
+      },
+      {
+        "evidence_id": "metrics:frontend:error_rate",
+        "why_it_matters": "Frontend error rate jumped from 0.4% to 6.9% at -5m, correlating with the deployment and the error logs, demonstrating the impact of the bad release."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Rollback frontend deployment to version 2.0.3",
+        "command": "kubectl rollout undo deployment/frontend -n otel-demo",
+        "risk": "low",
+        "rationale": "The TypeError was introduced in 2.0.4 and did not exist in 2.0.3. Rolling back will immediately stop the errors."
+      },
+      {
+        "title": "Verify frontend pods are healthy after rollback",
+        "command": "kubectl get pods -n otel-demo -l app=frontend -w",
+        "risk": "low",
+        "rationale": "Confirm that the rollback completes successfully and pods reach Ready state."
+      },
+      {
+        "title": "Check frontend error rate returns to baseline",
+        "command": "kubectl logs -n otel-demo -l app=frontend --tail=50 | grep -i 'currencyCode'",
+        "risk": "low",
+        "rationale": "Monitor logs to confirm the TypeError stops appearing after rollback, validating the fix."
+      }
+    ],
+    "related_documents": [
+      "PM-2026-01-20",
+      "PM-2026-08-02"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "currency",
+        "category": "dependency_unavailable",
+        "why_less_likely": "Currency service is not shown in the failing trace paths and has no error logs or metrics indicating it is down or degraded. The config change was a no-op (USD \u2192 USD). The TypeError is in frontend's own ProductPrice.tsx code, not a currency service failure."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:ad:deploy:2",
+      "source": "changes",
+      "service": "ad",
+      "title": "deployment/ad rolled out 2.0.2 \u2192 2.0.3 (9m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/ad",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 8.6
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:currency:config:1",
+      "source": "changes",
+      "service": "currency",
+      "title": "configmap/currency-config: DEFAULT_CURRENCY changed 'USD' \u2192 'USD' (5m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "config_change",
+        "resource": "configmap/currency-config",
+        "key": "DEFAULT_CURRENCY",
+        "old": "USD",
+        "new": "USD",
+        "minutes_before_alert": 5.0,
+        "affects": "currency"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:frontend:deploy:0",
+      "source": "changes",
+      "service": "frontend",
+      "title": "deployment/frontend rolled out 2.0.3 \u2192 2.0.4 (9m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/frontend",
+        "from_version": "2.0.3",
+        "to_version": "2.0.4",
+        "minutes_before_alert": 9.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:Pulled:1",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "Pulled \u00d71 on pod/frontend-bd0c76ba-b4d75",
+      "detail": "Successfully pulled image \"ghcr.io/open-telemetry/demo:2.0.4-frontend\"",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "Pulled",
+        "object": "pod/frontend-bd0c76ba-b4d75",
+        "count": 1,
+        "message": "Successfully pulled image \"ghcr.io/open-telemetry/demo:2.0.4-frontend\"",
+        "first_seen_min": -9.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:ScalingReplicaSet:0",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "ScalingReplicaSet \u00d71 on pod/frontend-bd0c76ba-b4d75",
+      "detail": "Scaled up replica set frontend-2.0.4 to 1",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "ScalingReplicaSet",
+        "object": "pod/frontend-bd0c76ba-b4d75",
+        "count": 1,
+        "message": "Scaled up replica set frontend-2.0.4 to 1",
+        "first_seen_min": -9.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:recommendation:pod_status",
+      "source": "k8s_events",
+      "service": "recommendation",
+      "title": "pod/recommendation-372f9d66-7f459 restarts=1, last terminated: Error (exit code 137)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/recommendation-372f9d66-7f459",
+        "phase": "Running",
+        "restarts": 1,
+        "last_termination_reason": "Error (exit code 137)",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:ad:1",
+      "source": "logs",
+      "service": "ad",
+      "title": "9\u00d7 WARN GC pause 120ms (G1 Young Generation)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "GC pause 120ms (G1 Young Generation)",
+        "level": "WARN",
+        "count": 9,
+        "sample": "GC pause 120ms (G1 Young Generation)",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:cart:1",
+      "source": "logs",
+      "service": "cart",
+      "title": "73\u00d7 ERROR grpc: received message larger than max (4194304 vs. 4194304)",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "grpc: received message larger than max (4194304 vs. 4194304)",
+        "level": "ERROR",
+        "count": 73,
+        "sample": "grpc: received message larger than max (4194304 vs. 4194304)",
+        "first_seen_min": -44.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend-proxy:1",
+      "source": "logs",
+      "service": "frontend-proxy",
+      "title": "1,465\u00d7 ERROR failed calling frontend: TypeError: Cannot read properties of null (reading 'currencyCode'",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "failed calling frontend: TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22",
+        "level": "ERROR",
+        "count": 1465,
+        "sample": "failed calling frontend: TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22",
+        "first_seen_min": -9.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:1",
+      "source": "logs",
+      "service": "frontend",
+      "title": "1,701\u00d7 ERROR TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22",
+        "level": "ERROR",
+        "count": 1701,
+        "sample": "TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22 (trace_id=\u2026)",
+        "first_seen_min": -9.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:2",
+      "source": "logs",
+      "service": "frontend",
+      "title": "14\u00d7 WARN slow render for /product/{id} (>500ms)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "slow render for /product/{id} (>500ms)",
+        "level": "WARN",
+        "count": 14,
+        "sample": "slow render for /product/{id} (>500ms)",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:ad:cpu_utilization",
+      "source": "metrics",
+      "service": "ad",
+      "title": "ad cpu utilization: 24.2% \u2192 23.7% (peak 26.4%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2437
+          ],
+          [
+            -44,
+            0.2358
+          ],
+          [
+            -43,
+            0.2599
+          ],
+          [
+            -42,
+            0.2638
+          ],
+          [
+            -41,
+            0.2356
+          ],
+          [
+            -40,
+            0.2311
+          ],
+          [
+            -39,
+            0.2489
+          ],
+          [
+            -38,
+            0.2329
+          ],
+          [
+            -37,
+            0.2569
+          ],
+          [
+            -36,
+            0.2416
+          ],
+          [
+            -35,
+            0.2299
+          ],
+          [
+            -34,
+            0.2402
+          ],
+          [
+            -33,
+            0.2351
+          ],
+          [
+            -32,
+            0.2482
+          ],
+          [
+            -31,
+            0.2462
+          ],
+          [
+            -30,
+            0.2383
+          ],
+          [
+            -29,
+            0.2344
+          ],
+          [
+            -28,
+            0.2444
+          ],
+          [
+            -27,
+            0.2293
+          ],
+          [
+            -26,
+            0.2321
+          ],
+          [
+            -25,
+            0.2316
+          ],
+          [
+            -24,
+            0.2239
+          ],
+          [
+            -23,
+            0.2399
+          ],
+          [
+            -22,
+            0.229
+          ],
+          [
+            -21,
+            0.2483
+          ],
+          [
+            -20,
+            0.2392
+          ],
+          [
+            -19,
+            0.26
+          ],
+          [
+            -18,
+            0.2366
+          ],
+          [
+            -17,
+            0.2384
+          ],
+          [
+            -16,
+            0.2339
+          ],
+          [
+            -15,
+            0.2385
+          ],
+          [
+            -14,
+            0.2407
+          ],
+          [
+            -13,
+            0.2346
+          ],
+          [
+            -12,
+            0.2373
+          ],
+          [
+            -11,
+            0.2538
+          ],
+          [
+            -10,
+            0.2432
+          ],
+          [
+            -9,
+            0.2532
+          ],
+          [
+            -8,
+            0.2326
+          ],
+          [
+            -7,
+            0.2282
+          ],
+          [
+            -6,
+            0.2565
+          ],
+          [
+            -5,
+            0.2441
+          ],
+          [
+            -4,
+            0.2529
+          ],
+          [
+            -3,
+            0.2261
+          ],
+          [
+            -2,
+            0.247
+          ],
+          [
+            -1,
+            0.2272
+          ],
+          [
+            0,
+            0.2232
+          ]
+        ],
+        "baseline": 0.2416,
+        "current": 0.2368,
+        "peak": 0.2638
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:ad:error_rate",
+      "source": "metrics",
+      "service": "ad",
+      "title": "ad error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.005
+          ],
+          [
+            -44,
+            0.0038
+          ],
+          [
+            -43,
+            0.004
+          ],
+          [
+            -42,
+            0.0036
+          ],
+          [
+            -41,
+            0.004
+          ],
+          [
+            -40,
+            0.0035
+          ],
+          [
+            -39,
+            0.0041
+          ],
+          [
+            -38,
+            0.0031
+          ],
+          [
+            -37,
+            0.0041
+          ],
+          [
+            -36,
+            0.0043
+          ],
+          [
+            -35,
+            0.0041
+          ],
+          [
+            -34,
+            0.0039
+          ],
+          [
+            -33,
+            0.0047
+          ],
+          [
+            -32,
+            0.0033
+          ],
+          [
+            -31,
+            0.004
+          ],
+          [
+            -30,
+            0.004
+          ],
+          [
+            -29,
+            0.0046
+          ],
+          [
+            -28,
+            0.0042
+          ],
+          [
+            -27,
+            0.0041
+          ],
+          [
+            -26,
+            0.005
+          ],
+          [
+            -25,
+            0.0046
+          ],
+          [
+            -24,
+            0.0045
+          ],
+          [
+            -23,
+            0.0047
+          ],
+          [
+            -22,
+            0.0039
+          ],
+          [
+            -21,
+            0.0043
+          ],
+          [
+            -20,
+            0.0059
+          ],
+          [
+            -19,
+            0.0039
+          ],
+          [
+            -18,
+            0.0055
+          ],
+          [
+            -17,
+            0.0053
+          ],
+          [
+            -16,
+            0.0037
+          ],
+          [
+            -15,
+            0.0043
+          ],
+          [
+            -14,
+            0.0045
+          ],
+          [
+            -13,
+            0.0044
+          ],
+          [
+            -12,
+            0.0045
+          ],
+          [
+            -11,
+            0.004
+          ],
+          [
+            -10,
+            0.0042
+          ],
+          [
+            -9,
+            0.0042
+          ],
+          [
+            -8,
+            0.0028
+          ],
+          [
+            -7,
+            0.0039
+          ],
+          [
+            -6,
+            0.0036
+          ],
+          [
+            -5,
+            0.0046
+          ],
+          [
+            -4,
+            0.0039
+          ],
+          [
+            -3,
+            0.0039
+          ],
+          [
+            -2,
+            0.0041
+          ],
+          [
+            -1,
+            0.0042
+          ],
+          [
+            0,
+            0.0042
+          ]
+        ],
+        "baseline": 0.004,
+        "current": 0.0042,
+        "peak": 0.0059
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:ad:memory_utilization",
+      "source": "metrics",
+      "service": "ad",
+      "title": "ad memory utilization: 58.1% \u2192 58.0% (peak 60.3%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.5767
+          ],
+          [
+            -44,
+            0.5878
+          ],
+          [
+            -43,
+            0.5816
+          ],
+          [
+            -42,
+            0.5812
+          ],
+          [
+            -41,
+            0.576
+          ],
+          [
+            -40,
+            0.5687
+          ],
+          [
+            -39,
+            0.5876
+          ],
+          [
+            -38,
+            0.5616
+          ],
+          [
+            -37,
+            0.5909
+          ],
+          [
+            -36,
+            0.5712
+          ],
+          [
+            -35,
+            0.5903
+          ],
+          [
+            -34,
+            0.5926
+          ],
+          [
+            -33,
+            0.5803
+          ],
+          [
+            -32,
+            0.5699
+          ],
+          [
+            -31,
+            0.5941
+          ],
+          [
+            -30,
+            0.5668
+          ],
+          [
+            -29,
+            0.5593
+          ],
+          [
+            -28,
+            0.5742
+          ],
+          [
+            -27,
+            0.5563
+          ],
+          [
+            -26,
+            0.5711
+          ],
+          [
+            -25,
+            0.5663
+          ],
+          [
+            -24,
+            0.575
+          ],
+          [
+            -23,
+            0.6032
+          ],
+          [
+            -22,
+            0.5934
+          ],
+          [
+            -21,
+            0.5952
+          ],
+          [
+            -20,
+            0.5678
+          ],
+          [
+            -19,
+            0.5886
+          ],
+          [
+            -18,
+            0.5644
+          ],
+          [
+            -17,
+            0.5741
+          ],
+          [
+            -16,
+            0.5817
+          ],
+          [
+            -15,
+            0.5929
+          ],
+          [
+            -14,
+            0.5926
+          ],
+          [
+            -13,
+            0.5779
+          ],
+          [
+            -12,
+            0.5687
+          ],
+          [
+            -11,
+            0.5982
+          ],
+          [
+            -10,
+            0.576
+          ],
+          [
+            -9,
+            0.5757
+          ],
+          [
+            -8,
+            0.5795
+          ],
+          [
+            -7,
+            0.5941
+          ],
+          [
+            -6,
+            0.5873
+          ],
+          [
+            -5,
+            0.5802
+          ],
+          [
+            -4,
+            0.5733
+          ],
+          [
+            -3,
+            0.5822
+          ],
+          [
+            -2,
+            0.5784
+          ],
+          [
+            -1,
+            0.5907
+          ],
+          [
+            0,
+            0.5738
+          ]
+        ],
+        "baseline": 0.5812,
+        "current": 0.5798,
+        "peak": 0.6032
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:ad:p95_latency_ms",
+      "source": "metrics",
+      "service": "ad",
+      "title": "ad p95 latency ms: 31ms \u2192 29ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            32.0338
+          ],
+          [
+            -44,
+            32.1666
+          ],
+          [
+            -43,
+            30.4456
+          ],
+          [
+            -42,
+            32.1703
+          ],
+          [
+            -41,
+            29.9181
+          ],
+          [
+            -40,
+            31.1738
+          ],
+          [
+            -39,
+            31.8707
+          ],
+          [
+            -38,
+            29.4167
+          ],
+          [
+            -37,
+            30.2162
+          ],
+          [
+            -36,
+            30.2508
+          ],
+          [
+            -35,
+            30.7404
+          ],
+          [
+            -34,
+            32.4734
+          ],
+          [
+            -33,
+            27.3672
+          ],
+          [
+            -32,
+            29.1361
+          ],
+          [
+            -31,
+            30.802
+          ],
+          [
+            -30,
+            27.7709
+          ],
+          [
+            -29,
+            31.7548
+          ],
+          [
+            -28,
+            28.5355
+          ],
+          [
+            -27,
+            30.5061
+          ],
+          [
+            -26,
+            30.1688
+          ],
+          [
+            -25,
+            36.5095
+          ],
+          [
+            -24,
+            29.0431
+          ],
+          [
+            -23,
+            29.3177
+          ],
+          [
+            -22,
+            27.7212
+          ],
+          [
+            -21,
+            29.9886
+          ],
+          [
+            -20,
+            29.567
+          ],
+          [
+            -19,
+            30.3149
+          ],
+          [
+            -18,
+            30.1789
+          ],
+          [
+            -17,
+            34.9305
+          ],
+          [
+            -16,
+            29.6139
+          ],
+          [
+            -15,
+            30.073
+          ],
+          [
+            -14,
+            28.555
+          ],
+          [
+            -13,
+            33.5399
+          ],
+          [
+            -12,
+            30.5324
+          ],
+          [
+            -11,
+            33.9195
+          ],
+          [
+            -10,
+            25.8169
+          ],
+          [
+            -9,
+            29.1078
+          ],
+          [
+            -8,
+            30.2627
+          ],
+          [
+            -7,
+            31.9067
+          ],
+          [
+            -6,
+            28.3865
+          ],
+          [
+            -5,
+            26.0992
+          ],
+          [
+            -4,
+            29.1956
+          ],
+          [
+            -3,
+            29.0862
+          ],
+          [
+            -2,
+            27.0314
+          ],
+          [
+            -1,
+            30.111
+          ],
+          [
+            0,
+            29.8999
+          ]
+        ],
+        "baseline": 30.7404,
+        "current": 28.5706,
+        "peak": 36.5095
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:ad:request_rate",
+      "source": "metrics",
+      "service": "ad",
+      "title": "ad request rate: 18.0 req/s \u2192 18.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            18.1663
+          ],
+          [
+            -44,
+            19.9381
+          ],
+          [
+            -43,
+            18.1995
+          ],
+          [
+            -42,
+            19.2297
+          ],
+          [
+            -41,
+            19.0218
+          ],
+          [
+            -40,
+            17.3268
+          ],
+          [
+            -39,
+            16.8512
+          ],
+          [
+            -38,
+            17.688
+          ],
+          [
+            -37,
+            17.993
+          ],
+          [
+            -36,
+            17.0564
+          ],
+          [
+            -35,
+            17.9029
+          ],
+          [
+            -34,
+            19.493
+          ],
+          [
+            -33,
+            19.2081
+          ],
+          [
+            -32,
+            17.5873
+          ],
+          [
+            -31,
+            17.3013
+          ],
+          [
+            -30,
+            17.7519
+          ],
+          [
+            -29,
+            17.7329
+          ],
+          [
+            -28,
+            19.0204
+          ],
+          [
+            -27,
+            16.1453
+          ],
+          [
+            -26,
+            18.7103
+          ],
+          [
+            -25,
+            17.5902
+          ],
+          [
+            -24,
+            16.6619
+          ],
+          [
+            -23,
+            19.2028
+          ],
+          [
+            -22,
+            17.3442
+          ],
+          [
+            -21,
+            18.1203
+          ],
+          [
+            -20,
+            18.5445
+          ],
+          [
+            -19,
+            17.3502
+          ],
+          [
+            -18,
+            18.1461
+          ],
+          [
+            -17,
+            19.0272
+          ],
+          [
+            -16,
+            18.1442
+          ],
+          [
+            -15,
+            18.0016
+          ],
+          [
+            -14,
+            17.6177
+          ],
+          [
+            -13,
+            17.9105
+          ],
+          [
+            -12,
+            19.1685
+          ],
+          [
+            -11,
+            17.9499
+          ],
+          [
+            -10,
+            17.476
+          ],
+          [
+            -9,
+            18.3867
+          ],
+          [
+            -8,
+            17.1579
+          ],
+          [
+            -7,
+            18.3702
+          ],
+          [
+            -6,
+            18.5087
+          ],
+          [
+            -5,
+            17.1864
+          ],
+          [
+            -4,
+            18.3554
+          ],
+          [
+            -3,
+            17.7699
+          ],
+          [
+            -2,
+            17.6067
+          ],
+          [
+            -1,
+            17.991
+          ],
+          [
+            0,
+            19.8365
+          ]
+        ],
+        "baseline": 17.993,
+        "current": 18.1243,
+        "peak": 19.9381
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:cart:cpu_utilization",
+      "source": "metrics",
+      "service": "cart",
+      "title": "cart cpu utilization: 20.6% \u2192 20.7% (peak 22.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2045
+          ],
+          [
+            -44,
+            0.2092
+          ],
+          [
+            -43,
+            0.2123
+          ],
+          [
+            -42,
+            0.214
+          ],
+          [
+            -41,
+            0.1987
+          ],
+          [
+            -40,
+            0.2063
+          ],
+          [
+            -39,
+            0.2202
+          ],
+          [
+            -38,
+            0.1895
+          ],
+          [
+            -37,
+            0.2063
+          ],
+          [
+            -36,
+            0.204
+          ],
+          [
+            -35,
+            0.2145
+          ],
+          [
+            -34,
+            0.2086
+          ],
+          [
+            -33,
+            0.2061
+          ],
+          [
+            -32,
+            0.221
+          ],
+          [
+            -31,
+            0.2293
+          ],
+          [
+            -30,
+            0.1975
+          ],
+          [
+            -29,
+            0.2236
+          ],
+          [
+            -28,
+            0.2171
+          ],
+          [
+            -27,
+            0.1941
+          ],
+          [
+            -26,
+            0.2211
+          ],
+          [
+            -25,
+            0.2006
+          ],
+          [
+            -24,
+            0.2044
+          ],
+          [
+            -23,
+            0.2168
+          ],
+          [
+            -22,
+            0.209
+          ],
+          [
+            -21,
+            0.2185
+          ],
+          [
+            -20,
+            0.2196
+          ],
+          [
+            -19,
+            0.2272
+          ],
+          [
+            -18,
+            0.2001
+          ],
+          [
+            -17,
+            0.2221
+          ],
+          [
+            -16,
+            0.1959
+          ],
+          [
+            -15,
+            0.2117
+          ],
+          [
+            -14,
+            0.2068
+          ],
+          [
+            -13,
+            0.2215
+          ],
+          [
+            -12,
+            0.1903
+          ],
+          [
+            -11,
+            0.2201
+          ],
+          [
+            -10,
+            0.2206
+          ],
+          [
+            -9,
+            0.2178
+          ],
+          [
+            -8,
+            0.2289
+          ],
+          [
+            -7,
+            0.2141
+          ],
+          [
+            -6,
+            0.214
+          ],
+          [
+            -5,
+            0.215
+          ],
+          [
+            -4,
+            0.189
+          ],
+          [
+            -3,
+            0.2114
+          ],
+          [
+            -2,
+            0.2105
+          ],
+          [
+            -1,
+            0.2093
+          ],
+          [
+            0,
+            0.207
+          ]
+        ],
+        "baseline": 0.2063,
+        "current": 0.207,
+        "peak": 0.2293
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:cart:error_rate",
+      "source": "metrics",
+      "service": "cart",
+      "title": "cart error rate: 0.5% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0036
+          ],
+          [
+            -44,
+            0.0046
+          ],
+          [
+            -43,
+            0.0047
+          ],
+          [
+            -42,
+            0.003
+          ],
+          [
+            -41,
+            0.0049
+          ],
+          [
+            -40,
+            0.0037
+          ],
+          [
+            -39,
+            0.0044
+          ],
+          [
+            -38,
+            0.0046
+          ],
+          [
+            -37,
+            0.0045
+          ],
+          [
+            -36,
+            0.0048
+          ],
+          [
+            -35,
+            0.0052
+          ],
+          [
+            -34,
+            0.005
+          ],
+          [
+            -33,
+            0.0038
+          ],
+          [
+            -32,
+            0.0043
+          ],
+          [
+            -31,
+            0.0045
+          ],
+          [
+            -30,
+            0.003
+          ],
+          [
+            -29,
+            0.0031
+          ],
+          [
+            -28,
+            0.0041
+          ],
+          [
+            -27,
+            0.0039
+          ],
+          [
+            -26,
+            0.0047
+          ],
+          [
+            -25,
+            0.003
+          ],
+          [
+            -24,
+            0.0039
+          ],
+          [
+            -23,
+            0.004
+          ],
+          [
+            -22,
+            0.0039
+          ],
+          [
+            -21,
+            0.0044
+          ],
+          [
+            -20,
+            0.004
+          ],
+          [
+            -19,
+            0.0038
+          ],
+          [
+            -18,
+            0.0032
+          ],
+          [
+            -17,
+            0.003
+          ],
+          [
+            -16,
+            0.0033
+          ],
+          [
+            -15,
+            0.0033
+          ],
+          [
+            -14,
+            0.0034
+          ],
+          [
+            -13,
+            0.0035
+          ],
+          [
+            -12,
+            0.0031
+          ],
+          [
+            -11,
+            0.0035
+          ],
+          [
+            -10,
+            0.0036
+          ],
+          [
+            -9,
+            0.0034
+          ],
+          [
+            -8,
+            0.0042
+          ],
+          [
+            -7,
+            0.0034
+          ],
+          [
+            -6,
+            0.0041
+          ],
+          [
+            -5,
+            0.0044
+          ],
+          [
+            -4,
+            0.0033
+          ],
+          [
+            -3,
+            0.0043
+          ],
+          [
+            -2,
+            0.0027
+          ],
+          [
+            -1,
+            0.0047
+          ],
+          [
+            0,
+            0.0036
+          ]
+        ],
+        "baseline": 0.0046,
+        "current": 0.0038,
+        "peak": 0.0052
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:cart:memory_utilization",
+      "source": "metrics",
+      "service": "cart",
+      "title": "cart memory utilization: 44.1% \u2192 44.1% (peak 46.1%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.4481
+          ],
+          [
+            -44,
+            0.4414
+          ],
+          [
+            -43,
+            0.4499
+          ],
+          [
+            -42,
+            0.4372
+          ],
+          [
+            -41,
+            0.4426
+          ],
+          [
+            -40,
+            0.4355
+          ],
+          [
+            -39,
+            0.4427
+          ],
+          [
+            -38,
+            0.4371
+          ],
+          [
+            -37,
+            0.4372
+          ],
+          [
+            -36,
+            0.4363
+          ],
+          [
+            -35,
+            0.4446
+          ],
+          [
+            -34,
+            0.4422
+          ],
+          [
+            -33,
+            0.4379
+          ],
+          [
+            -32,
+            0.4324
+          ],
+          [
+            -31,
+            0.4533
+          ],
+          [
+            -30,
+            0.4259
+          ],
+          [
+            -29,
+            0.4261
+          ],
+          [
+            -28,
+            0.4448
+          ],
+          [
+            -27,
+            0.435
+          ],
+          [
+            -26,
+            0.4462
+          ],
+          [
+            -25,
+            0.4401
+          ],
+          [
+            -24,
+            0.4324
+          ],
+          [
+            -23,
+            0.438
+          ],
+          [
+            -22,
+            0.4401
+          ],
+          [
+            -21,
+            0.4381
+          ],
+          [
+            -20,
+            0.4608
+          ],
+          [
+            -19,
+            0.4351
+          ],
+          [
+            -18,
+            0.4142
+          ],
+          [
+            -17,
+            0.4342
+          ],
+          [
+            -16,
+            0.4446
+          ],
+          [
+            -15,
+            0.427
+          ],
+          [
+            -14,
+            0.4447
+          ],
+          [
+            -13,
+            0.4272
+          ],
+          [
+            -12,
+            0.4377
+          ],
+          [
+            -11,
+            0.4408
+          ],
+          [
+            -10,
+            0.4502
+          ],
+          [
+            -9,
+            0.4569
+          ],
+          [
+            -8,
+            0.4411
+          ],
+          [
+            -7,
+            0.4561
+          ],
+          [
+            -6,
+            0.4362
+          ],
+          [
+            -5,
+            0.4419
+          ],
+          [
+            -4,
+            0.4353
+          ],
+          [
+            -3,
+            0.4411
+          ],
+          [
+            -2,
+            0.4469
+          ],
+          [
+            -1,
+            0.4351
+          ],
+          [
+            0,
+            0.4433
+          ]
+        ],
+        "baseline": 0.4414,
+        "current": 0.4406,
+        "peak": 0.4608
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:cart:p95_latency_ms",
+      "source": "metrics",
+      "service": "cart",
+      "title": "cart p95 latency ms: 25ms \u2192 25ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            26.6082
+          ],
+          [
+            -44,
+            22.8029
+          ],
+          [
+            -43,
+            26.26
+          ],
+          [
+            -42,
+            20.0556
+          ],
+          [
+            -41,
+            27.804
+          ],
+          [
+            -40,
+            25.8856
+          ],
+          [
+            -39,
+            24.4872
+          ],
+          [
+            -38,
+            24.5722
+          ],
+          [
+            -37,
+            24.5536
+          ],
+          [
+            -36,
+            23.4238
+          ],
+          [
+            -35,
+            22.5619
+          ],
+          [
+            -34,
+            22.9429
+          ],
+          [
+            -33,
+            22.3968
+          ],
+          [
+            -32,
+            26.8181
+          ],
+          [
+            -31,
+            24.7161
+          ],
+          [
+            -30,
+            23.942
+          ],
+          [
+            -29,
+            24.332
+          ],
+          [
+            -28,
+            27.8924
+          ],
+          [
+            -27,
+            25.4284
+          ],
+          [
+            -26,
+            25.7106
+          ],
+          [
+            -25,
+            24.7105
+          ],
+          [
+            -24,
+            23.1833
+          ],
+          [
+            -23,
+            25.7905
+          ],
+          [
+            -22,
+            24.5292
+          ],
+          [
+            -21,
+            24.1434
+          ],
+          [
+            -20,
+            28.6544
+          ],
+          [
+            -19,
+            24.4087
+          ],
+          [
+            -18,
+            21.7754
+          ],
+          [
+            -17,
+            25.4226
+          ],
+          [
+            -16,
+            25.5533
+          ],
+          [
+            -15,
+            24.7558
+          ],
+          [
+            -14,
+            23.7648
+          ],
+          [
+            -13,
+            24.1134
+          ],
+          [
+            -12,
+            26.514
+          ],
+          [
+            -11,
+            25.731
+          ],
+          [
+            -10,
+            25.2635
+          ],
+          [
+            -9,
+            24.6837
+          ],
+          [
+            -8,
+            25.2135
+          ],
+          [
+            -7,
+            25.6981
+          ],
+          [
+            -6,
+            24.5073
+          ],
+          [
+            -5,
+            26.5013
+          ],
+          [
+            -4,
+            26.665
+          ],
+          [
+            -3,
+            23.3598
+          ],
+          [
+            -2,
+            25.3284
+          ],
+          [
+            -1,
+            24.8107
+          ],
+          [
+            0,
+            22.945
+          ]
+        ],
+        "baseline": 24.5536,
+        "current": 24.935,
+        "peak": 28.6544
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:cart:request_rate",
+      "source": "metrics",
+      "service": "cart",
+      "title": "cart request rate: 20.8 req/s \u2192 21.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            22.548
+          ],
+          [
+            -44,
+            20.3545
+          ],
+          [
+            -43,
+            21.4143
+          ],
+          [
+            -42,
+            20.5314
+          ],
+          [
+            -41,
+            18.947
+          ],
+          [
+            -40,
+            20.657
+          ],
+          [
+            -39,
+            20.8036
+          ],
+          [
+            -38,
+            21.4014
+          ],
+          [
+            -37,
+            22.3792
+          ],
+          [
+            -36,
+            20.4382
+          ],
+          [
+            -35,
+            21.5215
+          ],
+          [
+            -34,
+            19.9553
+          ],
+          [
+            -33,
+            22.4617
+          ],
+          [
+            -32,
+            18.6483
+          ],
+          [
+            -31,
+            20.6263
+          ],
+          [
+            -30,
+            21.2944
+          ],
+          [
+            -29,
+            21.3818
+          ],
+          [
+            -28,
+            21.7434
+          ],
+          [
+            -27,
+            20.7985
+          ],
+          [
+            -26,
+            20.2972
+          ],
+          [
+            -25,
+            20.8207
+          ],
+          [
+            -24,
+            18.6559
+          ],
+          [
+            -23,
+            20.4059
+          ],
+          [
+            -22,
+            20.8445
+          ],
+          [
+            -21,
+            21.6663
+          ],
+          [
+            -20,
+            21.0166
+          ],
+          [
+            -19,
+            20.365
+          ],
+          [
+            -18,
+            20.7263
+          ],
+          [
+            -17,
+            20.0954
+          ],
+          [
+            -16,
+            21.6934
+          ],
+          [
+            -15,
+            21.4722
+          ],
+          [
+            -14,
+            21.9697
+          ],
+          [
+            -13,
+            22.2578
+          ],
+          [
+            -12,
+            22.1776
+          ],
+          [
+            -11,
+            18.5924
+          ],
+          [
+            -10,
+            21.7046
+          ],
+          [
+            -9,
+            21.7759
+          ],
+          [
+            -8,
+            21.012
+          ],
+          [
+            -7,
+            19.7851
+          ],
+          [
+            -6,
+            18.9134
+          ],
+          [
+            -5,
+            21.235
+          ],
+          [
+            -4,
+            20.9007
+          ],
+          [
+            -3,
+            23.0014
+          ],
+          [
+            -2,
+            20.919
+          ],
+          [
+            -1,
+            20.1396
+          ],
+          [
+            0,
+            20.1395
+          ]
+        ],
+        "baseline": 20.8036,
+        "current": 21.0559,
+        "peak": 23.0014
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:cpu_utilization",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout cpu utilization: 18.9% \u2192 18.1% (peak 20.4%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1841
+          ],
+          [
+            -44,
+            0.195
+          ],
+          [
+            -43,
+            0.193
+          ],
+          [
+            -42,
+            0.1861
+          ],
+          [
+            -41,
+            0.1754
+          ],
+          [
+            -40,
+            0.183
+          ],
+          [
+            -39,
+            0.198
+          ],
+          [
+            -38,
+            0.2009
+          ],
+          [
+            -37,
+            0.1902
+          ],
+          [
+            -36,
+            0.1892
+          ],
+          [
+            -35,
+            0.1769
+          ],
+          [
+            -34,
+            0.1808
+          ],
+          [
+            -33,
+            0.1932
+          ],
+          [
+            -32,
+            0.1794
+          ],
+          [
+            -31,
+            0.1833
+          ],
+          [
+            -30,
+            0.166
+          ],
+          [
+            -29,
+            0.1816
+          ],
+          [
+            -28,
+            0.1644
+          ],
+          [
+            -27,
+            0.1725
+          ],
+          [
+            -26,
+            0.1769
+          ],
+          [
+            -25,
+            0.1844
+          ],
+          [
+            -24,
+            0.1821
+          ],
+          [
+            -23,
+            0.1841
+          ],
+          [
+            -22,
+            0.1719
+          ],
+          [
+            -21,
+            0.1888
+          ],
+          [
+            -20,
+            0.1736
+          ],
+          [
+            -19,
+            0.1707
+          ],
+          [
+            -18,
+            0.1925
+          ],
+          [
+            -17,
+            0.2036
+          ],
+          [
+            -16,
+            0.1779
+          ],
+          [
+            -15,
+            0.1791
+          ],
+          [
+            -14,
+            0.1836
+          ],
+          [
+            -13,
+            0.1638
+          ],
+          [
+            -12,
+            0.1671
+          ],
+          [
+            -11,
+            0.1766
+          ],
+          [
+            -10,
+            0.1913
+          ],
+          [
+            -9,
+            0.1857
+          ],
+          [
+            -8,
+            0.1884
+          ],
+          [
+            -7,
+            0.2002
+          ],
+          [
+            -6,
+            0.1906
+          ],
+          [
+            -5,
+            0.1945
+          ],
+          [
+            -4,
+            0.1745
+          ],
+          [
+            -3,
+            0.1863
+          ],
+          [
+            -2,
+            0.1712
+          ],
+          [
+            -1,
+            0.1868
+          ],
+          [
+            0,
+            0.1746
+          ]
+        ],
+        "baseline": 0.1892,
+        "current": 0.1813,
+        "peak": 0.2036
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:error_rate",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0039
+          ],
+          [
+            -44,
+            0.0039
+          ],
+          [
+            -43,
+            0.0041
+          ],
+          [
+            -42,
+            0.0044
+          ],
+          [
+            -41,
+            0.004
+          ],
+          [
+            -40,
+            0.0018
+          ],
+          [
+            -39,
+            0.0039
+          ],
+          [
+            -38,
+            0.0027
+          ],
+          [
+            -37,
+            0.0041
+          ],
+          [
+            -36,
+            0.0046
+          ],
+          [
+            -35,
+            0.004
+          ],
+          [
+            -34,
+            0.0044
+          ],
+          [
+            -33,
+            0.004
+          ],
+          [
+            -32,
+            0.0047
+          ],
+          [
+            -31,
+            0.0038
+          ],
+          [
+            -30,
+            0.0036
+          ],
+          [
+            -29,
+            0.005
+          ],
+          [
+            -28,
+            0.0033
+          ],
+          [
+            -27,
+            0.0029
+          ],
+          [
+            -26,
+            0.0047
+          ],
+          [
+            -25,
+            0.004
+          ],
+          [
+            -24,
+            0.0051
+          ],
+          [
+            -23,
+            0.0027
+          ],
+          [
+            -22,
+            0.0045
+          ],
+          [
+            -21,
+            0.0028
+          ],
+          [
+            -20,
+            0.0036
+          ],
+          [
+            -19,
+            0.0045
+          ],
+          [
+            -18,
+            0.0039
+          ],
+          [
+            -17,
+            0.004
+          ],
+          [
+            -16,
+            0.0036
+          ],
+          [
+            -15,
+            0.0039
+          ],
+          [
+            -14,
+            0.0025
+          ],
+          [
+            -13,
+            0.0039
+          ],
+          [
+            -12,
+            0.0046
+          ],
+          [
+            -11,
+            0.0047
+          ],
+          [
+            -10,
+            0.003
+          ],
+          [
+            -9,
+            0.003
+          ],
+          [
+            -8,
+            0.0043
+          ],
+          [
+            -7,
+            0.0046
+          ],
+          [
+            -6,
+            0.0042
+          ],
+          [
+            -5,
+            0.0029
+          ],
+          [
+            -4,
+            0.0039
+          ],
+          [
+            -3,
+            0.0048
+          ],
+          [
+            -2,
+            0.0041
+          ],
+          [
+            -1,
+            0.0038
+          ],
+          [
+            0,
+            0.004
+          ]
+        ],
+        "baseline": 0.004,
+        "current": 0.0039,
+        "peak": 0.0051
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:memory_utilization",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout memory utilization: 41.1% \u2192 40.8% (peak 43.1%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.4027
+          ],
+          [
+            -44,
+            0.4185
+          ],
+          [
+            -43,
+            0.4097
+          ],
+          [
+            -42,
+            0.4186
+          ],
+          [
+            -41,
+            0.4173
+          ],
+          [
+            -40,
+            0.4202
+          ],
+          [
+            -39,
+            0.4101
+          ],
+          [
+            -38,
+            0.4063
+          ],
+          [
+            -37,
+            0.4113
+          ],
+          [
+            -36,
+            0.4145
+          ],
+          [
+            -35,
+            0.4052
+          ],
+          [
+            -34,
+            0.4088
+          ],
+          [
+            -33,
+            0.4024
+          ],
+          [
+            -32,
+            0.4034
+          ],
+          [
+            -31,
+            0.4042
+          ],
+          [
+            -30,
+            0.4118
+          ],
+          [
+            -29,
+            0.4052
+          ],
+          [
+            -28,
+            0.431
+          ],
+          [
+            -27,
+            0.4012
+          ],
+          [
+            -26,
+            0.4158
+          ],
+          [
+            -25,
+            0.4197
+          ],
+          [
+            -24,
+            0.4074
+          ],
+          [
+            -23,
+            0.4191
+          ],
+          [
+            -22,
+            0.411
+          ],
+          [
+            -21,
+            0.3967
+          ],
+          [
+            -20,
+            0.4168
+          ],
+          [
+            -19,
+            0.4111
+          ],
+          [
+            -18,
+            0.4172
+          ],
+          [
+            -17,
+            0.4139
+          ],
+          [
+            -16,
+            0.4136
+          ],
+          [
+            -15,
+            0.4035
+          ],
+          [
+            -14,
+            0.403
+          ],
+          [
+            -13,
+            0.415
+          ],
+          [
+            -12,
+            0.4171
+          ],
+          [
+            -11,
+            0.4172
+          ],
+          [
+            -10,
+            0.4089
+          ],
+          [
+            -9,
+            0.4025
+          ],
+          [
+            -8,
+            0.4193
+          ],
+          [
+            -7,
+            0.422
+          ],
+          [
+            -6,
+            0.3934
+          ],
+          [
+            -5,
+            0.403
+          ],
+          [
+            -4,
+            0.4165
+          ],
+          [
+            -3,
+            0.3971
+          ],
+          [
+            -2,
+            0.4144
+          ],
+          [
+            -1,
+            0.4104
+          ],
+          [
+            0,
+            0.4046
+          ]
+        ],
+        "baseline": 0.4113,
+        "current": 0.4077,
+        "peak": 0.431
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:p95_latency_ms",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout p95 latency ms: 321ms \u2192 320ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            320.7075
+          ],
+          [
+            -44,
+            291.2023
+          ],
+          [
+            -43,
+            354.8566
+          ],
+          [
+            -42,
+            325.3077
+          ],
+          [
+            -41,
+            317.6751
+          ],
+          [
+            -40,
+            305.5209
+          ],
+          [
+            -39,
+            346.2427
+          ],
+          [
+            -38,
+            311.2555
+          ],
+          [
+            -37,
+            300.4289
+          ],
+          [
+            -36,
+            381.7328
+          ],
+          [
+            -35,
+            324.8199
+          ],
+          [
+            -34,
+            298.8434
+          ],
+          [
+            -33,
+            337.9223
+          ],
+          [
+            -32,
+            332.3352
+          ],
+          [
+            -31,
+            294.5657
+          ],
+          [
+            -30,
+            309.6698
+          ],
+          [
+            -29,
+            335.6479
+          ],
+          [
+            -28,
+            316.5532
+          ],
+          [
+            -27,
+            325.2652
+          ],
+          [
+            -26,
+            318.9513
+          ],
+          [
+            -25,
+            299.954
+          ],
+          [
+            -24,
+            311.0327
+          ],
+          [
+            -23,
+            303.6086
+          ],
+          [
+            -22,
+            326.0755
+          ],
+          [
+            -21,
+            311.2536
+          ],
+          [
+            -20,
+            296.057
+          ],
+          [
+            -19,
+            323.001
+          ],
+          [
+            -18,
+            310.0542
+          ],
+          [
+            -17,
+            295.6291
+          ],
+          [
+            -16,
+            326.8127
+          ],
+          [
+            -15,
+            328.8315
+          ],
+          [
+            -14,
+            301.0306
+          ],
+          [
+            -13,
+            331.9962
+          ],
+          [
+            -12,
+            330.5846
+          ],
+          [
+            -11,
+            283.3568
+          ],
+          [
+            -10,
+            338.2566
+          ],
+          [
+            -9,
+            307.1068
+          ],
+          [
+            -8,
+            359.0267
+          ],
+          [
+            -7,
+            362.6041
+          ],
+          [
+            -6,
+            321.0228
+          ],
+          [
+            -5,
+            321.8226
+          ],
+          [
+            -4,
+            299.6978
+          ],
+          [
+            -3,
+            330.7885
+          ],
+          [
+            -2,
+            327.183
+          ],
+          [
+            -1,
+            306.0893
+          ],
+          [
+            0,
+            334.6666
+          ]
+        ],
+        "baseline": 320.7075,
+        "current": 320.0413,
+        "peak": 381.7328
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:checkout:request_rate",
+      "source": "metrics",
+      "service": "checkout",
+      "title": "checkout request rate: 3.2 req/s \u2192 3.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            3.4807
+          ],
+          [
+            -44,
+            3.2024
+          ],
+          [
+            -43,
+            3.2786
+          ],
+          [
+            -42,
+            3.1894
+          ],
+          [
+            -41,
+            3.255
+          ],
+          [
+            -40,
+            3.0225
+          ],
+          [
+            -39,
+            3.5273
+          ],
+          [
+            -38,
+            3.4268
+          ],
+          [
+            -37,
+            3.0037
+          ],
+          [
+            -36,
+            2.9707
+          ],
+          [
+            -35,
+            3.0883
+          ],
+          [
+            -34,
+            3.2733
+          ],
+          [
+            -33,
+            3.244
+          ],
+          [
+            -32,
+            3.594
+          ],
+          [
+            -31,
+            3.3935
+          ],
+          [
+            -30,
+            3.2574
+          ],
+          [
+            -29,
+            3.1153
+          ],
+          [
+            -28,
+            3.2781
+          ],
+          [
+            -27,
+            3.2816
+          ],
+          [
+            -26,
+            3.0057
+          ],
+          [
+            -25,
+            3.0792
+          ],
+          [
+            -24,
+            3.3178
+          ],
+          [
+            -23,
+            3.2115
+          ],
+          [
+            -22,
+            3.1379
+          ],
+          [
+            -21,
+            3.2853
+          ],
+          [
+            -20,
+            2.9172
+          ],
+          [
+            -19,
+            3.2768
+          ],
+          [
+            -18,
+            3.229
+          ],
+          [
+            -17,
+            3.296
+          ],
+          [
+            -16,
+            3.03
+          ],
+          [
+            -15,
+            3.1101
+          ],
+          [
+            -14,
+            3.1905
+          ],
+          [
+            -13,
+            3.2261
+          ],
+          [
+            -12,
+            2.9074
+          ],
+          [
+            -11,
+            2.7774
+          ],
+          [
+            -10,
+            3.265
+          ],
+          [
+            -9,
+            3.2024
+          ],
+          [
+            -8,
+            3.6396
+          ],
+          [
+            -7,
+            3.4081
+          ],
+          [
+            -6,
+            3.1734
+          ],
+          [
+            -5,
+            3.1325
+          ],
+          [
+            -4,
+            3.0356
+          ],
+          [
+            -3,
+            3.0254
+          ],
+          [
+            -2,
+            3.3568
+          ],
+          [
+            -1,
+            3.2244
+          ],
+          [
+            0,
+            3.1237
+          ]
+        ],
+        "baseline": 3.2024,
+        "current": 3.1497,
+        "peak": 3.6396
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend-proxy:cpu_utilization",
+      "source": "metrics",
+      "service": "frontend-proxy",
+      "title": "frontend-proxy cpu utilization: 22.1% \u2192 21.9% (peak 24.1%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2194
+          ],
+          [
+            -44,
+            0.2208
+          ],
+          [
+            -43,
+            0.2094
+          ],
+          [
+            -42,
+            0.2234
+          ],
+          [
+            -41,
+            0.2212
+          ],
+          [
+            -40,
+            0.2219
+          ],
+          [
+            -39,
+            0.2414
+          ],
+          [
+            -38,
+            0.2083
+          ],
+          [
+            -37,
+            0.2274
+          ],
+          [
+            -36,
+            0.209
+          ],
+          [
+            -35,
+            0.2164
+          ],
+          [
+            -34,
+            0.2162
+          ],
+          [
+            -33,
+            0.2116
+          ],
+          [
+            -32,
+            0.2253
+          ],
+          [
+            -31,
+            0.1941
+          ],
+          [
+            -30,
+            0.2145
+          ],
+          [
+            -29,
+            0.2152
+          ],
+          [
+            -28,
+            0.2094
+          ],
+          [
+            -27,
+            0.219
+          ],
+          [
+            -26,
+            0.2156
+          ],
+          [
+            -25,
+            0.2231
+          ],
+          [
+            -24,
+            0.212
+          ],
+          [
+            -23,
+            0.2027
+          ],
+          [
+            -22,
+            0.2222
+          ],
+          [
+            -21,
+            0.2221
+          ],
+          [
+            -20,
+            0.2172
+          ],
+          [
+            -19,
+            0.2111
+          ],
+          [
+            -18,
+            0.2221
+          ],
+          [
+            -17,
+            0.2225
+          ],
+          [
+            -16,
+            0.2158
+          ],
+          [
+            -15,
+            0.2304
+          ],
+          [
+            -14,
+            0.207
+          ],
+          [
+            -13,
+            0.2248
+          ],
+          [
+            -12,
+            0.1988
+          ],
+          [
+            -11,
+            0.2123
+          ],
+          [
+            -10,
+            0.1982
+          ],
+          [
+            -9,
+            0.2143
+          ],
+          [
+            -8,
+            0.2181
+          ],
+          [
+            -7,
+            0.2109
+          ],
+          [
+            -6,
+            0.2029
+          ],
+          [
+            -5,
+            0.2074
+          ],
+          [
+            -4,
+            0.2081
+          ],
+          [
+            -3,
+            0.2318
+          ],
+          [
+            -2,
+            0.2172
+          ],
+          [
+            -1,
+            0.2254
+          ],
+          [
+            0,
+            0.2247
+          ]
+        ],
+        "baseline": 0.2208,
+        "current": 0.2191,
+        "peak": 0.2414
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend-proxy:error_rate",
+      "source": "metrics",
+      "service": "frontend-proxy",
+      "title": "frontend-proxy error rate: 0.4% \u2192 6.1%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0046
+          ],
+          [
+            -44,
+            0.0042
+          ],
+          [
+            -43,
+            0.0044
+          ],
+          [
+            -42,
+            0.0041
+          ],
+          [
+            -41,
+            0.0047
+          ],
+          [
+            -40,
+            0.0044
+          ],
+          [
+            -39,
+            0.0053
+          ],
+          [
+            -38,
+            0.0046
+          ],
+          [
+            -37,
+            0.0045
+          ],
+          [
+            -36,
+            0.0038
+          ],
+          [
+            -35,
+            0.0035
+          ],
+          [
+            -34,
+            0.0046
+          ],
+          [
+            -33,
+            0.0037
+          ],
+          [
+            -32,
+            0.003
+          ],
+          [
+            -31,
+            0.0049
+          ],
+          [
+            -30,
+            0.0048
+          ],
+          [
+            -29,
+            0.0039
+          ],
+          [
+            -28,
+            0.0036
+          ],
+          [
+            -27,
+            0.0033
+          ],
+          [
+            -26,
+            0.0045
+          ],
+          [
+            -25,
+            0.0041
+          ],
+          [
+            -24,
+            0.0032
+          ],
+          [
+            -23,
+            0.0033
+          ],
+          [
+            -22,
+            0.0038
+          ],
+          [
+            -21,
+            0.0035
+          ],
+          [
+            -20,
+            0.0032
+          ],
+          [
+            -19,
+            0.0037
+          ],
+          [
+            -18,
+            0.0046
+          ],
+          [
+            -17,
+            0.0038
+          ],
+          [
+            -16,
+            0.0045
+          ],
+          [
+            -15,
+            0.0041
+          ],
+          [
+            -14,
+            0.0033
+          ],
+          [
+            -13,
+            0.0045
+          ],
+          [
+            -12,
+            0.0035
+          ],
+          [
+            -11,
+            0.0038
+          ],
+          [
+            -10,
+            0.003
+          ],
+          [
+            -9,
+            0.0043
+          ],
+          [
+            -8,
+            0.0331
+          ],
+          [
+            -7,
+            0.0512
+          ],
+          [
+            -6,
+            0.0536
+          ],
+          [
+            -5,
+            0.0497
+          ],
+          [
+            -4,
+            0.0599
+          ],
+          [
+            -3,
+            0.064
+          ],
+          [
+            -2,
+            0.0525
+          ],
+          [
+            -1,
+            0.0801
+          ],
+          [
+            0,
+            0.0614
+          ]
+        ],
+        "baseline": 0.0044,
+        "current": 0.0613,
+        "peak": 0.0801
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend-proxy:memory_utilization",
+      "source": "metrics",
+      "service": "frontend-proxy",
+      "title": "frontend-proxy memory utilization: 35.2% \u2192 35.2% (peak 36.2%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3464
+          ],
+          [
+            -44,
+            0.3584
+          ],
+          [
+            -43,
+            0.3525
+          ],
+          [
+            -42,
+            0.3416
+          ],
+          [
+            -41,
+            0.3613
+          ],
+          [
+            -40,
+            0.3571
+          ],
+          [
+            -39,
+            0.3445
+          ],
+          [
+            -38,
+            0.3486
+          ],
+          [
+            -37,
+            0.3622
+          ],
+          [
+            -36,
+            0.3566
+          ],
+          [
+            -35,
+            0.3416
+          ],
+          [
+            -34,
+            0.3573
+          ],
+          [
+            -33,
+            0.338
+          ],
+          [
+            -32,
+            0.3557
+          ],
+          [
+            -31,
+            0.3455
+          ],
+          [
+            -30,
+            0.3478
+          ],
+          [
+            -29,
+            0.3485
+          ],
+          [
+            -28,
+            0.3412
+          ],
+          [
+            -27,
+            0.3358
+          ],
+          [
+            -26,
+            0.3477
+          ],
+          [
+            -25,
+            0.3438
+          ],
+          [
+            -24,
+            0.3535
+          ],
+          [
+            -23,
+            0.3482
+          ],
+          [
+            -22,
+            0.3509
+          ],
+          [
+            -21,
+            0.3461
+          ],
+          [
+            -20,
+            0.3373
+          ],
+          [
+            -19,
+            0.3485
+          ],
+          [
+            -18,
+            0.3561
+          ],
+          [
+            -17,
+            0.3526
+          ],
+          [
+            -16,
+            0.3414
+          ],
+          [
+            -15,
+            0.3589
+          ],
+          [
+            -14,
+            0.3427
+          ],
+          [
+            -13,
+            0.3468
+          ],
+          [
+            -12,
+            0.3472
+          ],
+          [
+            -11,
+            0.3563
+          ],
+          [
+            -10,
+            0.3444
+          ],
+          [
+            -9,
+            0.3476
+          ],
+          [
+            -8,
+            0.3508
+          ],
+          [
+            -7,
+            0.3591
+          ],
+          [
+            -6,
+            0.3485
+          ],
+          [
+            -5,
+            0.355
+          ],
+          [
+            -4,
+            0.3557
+          ],
+          [
+            -3,
+            0.3468
+          ],
+          [
+            -2,
+            0.3601
+          ],
+          [
+            -1,
+            0.3522
+          ],
+          [
+            0,
+            0.3455
+          ]
+        ],
+        "baseline": 0.3525,
+        "current": 0.3525,
+        "peak": 0.3622
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend-proxy:p95_latency_ms",
+      "source": "metrics",
+      "service": "frontend-proxy",
+      "title": "frontend-proxy p95 latency ms: 203ms \u2192 223ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            195.5123
+          ],
+          [
+            -44,
+            239.3899
+          ],
+          [
+            -43,
+            223.9956
+          ],
+          [
+            -42,
+            205.1564
+          ],
+          [
+            -41,
+            197.435
+          ],
+          [
+            -40,
+            197.6666
+          ],
+          [
+            -39,
+            236.2912
+          ],
+          [
+            -38,
+            191.3888
+          ],
+          [
+            -37,
+            202.9504
+          ],
+          [
+            -36,
+            196.1192
+          ],
+          [
+            -35,
+            212.0202
+          ],
+          [
+            -34,
+            209.7043
+          ],
+          [
+            -33,
+            175.6885
+          ],
+          [
+            -32,
+            227.6228
+          ],
+          [
+            -31,
+            208.8874
+          ],
+          [
+            -30,
+            203.2556
+          ],
+          [
+            -29,
+            210.8764
+          ],
+          [
+            -28,
+            231.4551
+          ],
+          [
+            -27,
+            209.5391
+          ],
+          [
+            -26,
+            228.9339
+          ],
+          [
+            -25,
+            206.2013
+          ],
+          [
+            -24,
+            202.1459
+          ],
+          [
+            -23,
+            233.7074
+          ],
+          [
+            -22,
+            210.015
+          ],
+          [
+            -21,
+            198.7216
+          ],
+          [
+            -20,
+            217.0254
+          ],
+          [
+            -19,
+            178.7125
+          ],
+          [
+            -18,
+            221.1133
+          ],
+          [
+            -17,
+            210.5045
+          ],
+          [
+            -16,
+            224.64
+          ],
+          [
+            -15,
+            213.3611
+          ],
+          [
+            -14,
+            214.2318
+          ],
+          [
+            -13,
+            225.7404
+          ],
+          [
+            -12,
+            231.9791
+          ],
+          [
+            -11,
+            207.3442
+          ],
+          [
+            -10,
+            203.7523
+          ],
+          [
+            -9,
+            221.8094
+          ],
+          [
+            -8,
+            217.3841
+          ],
+          [
+            -7,
+            241.5883
+          ],
+          [
+            -6,
+            205.8504
+          ],
+          [
+            -5,
+            203.7896
+          ],
+          [
+            -4,
+            229.8991
+          ],
+          [
+            -3,
+            229.6075
+          ],
+          [
+            -2,
+            223.9557
+          ],
+          [
+            -1,
+            199.7748
+          ],
+          [
+            0,
+            248.2409
+          ]
+        ],
+        "baseline": 202.9504,
+        "current": 222.5446,
+        "peak": 248.2409
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend-proxy:request_rate",
+      "source": "metrics",
+      "service": "frontend-proxy",
+      "title": "frontend-proxy request rate: 49.2 req/s \u2192 47.3 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            47.7507
+          ],
+          [
+            -44,
+            52.831
+          ],
+          [
+            -43,
+            49.5852
+          ],
+          [
+            -42,
+            49.4102
+          ],
+          [
+            -41,
+            50.2568
+          ],
+          [
+            -40,
+            48.4035
+          ],
+          [
+            -39,
+            42.3258
+          ],
+          [
+            -38,
+            51.5521
+          ],
+          [
+            -37,
+            49.2266
+          ],
+          [
+            -36,
+            46.0725
+          ],
+          [
+            -35,
+            44.8537
+          ],
+          [
+            -34,
+            47.1966
+          ],
+          [
+            -33,
+            48.2824
+          ],
+          [
+            -32,
+            50.031
+          ],
+          [
+            -31,
+            42.2753
+          ],
+          [
+            -30,
+            49.2023
+          ],
+          [
+            -29,
+            47.2751
+          ],
+          [
+            -28,
+            54.4954
+          ],
+          [
+            -27,
+            47.9273
+          ],
+          [
+            -26,
+            46.7367
+          ],
+          [
+            -25,
+            47.6183
+          ],
+          [
+            -24,
+            46.043
+          ],
+          [
+            -23,
+            49.4341
+          ],
+          [
+            -22,
+            52.7641
+          ],
+          [
+            -21,
+            46.9388
+          ],
+          [
+            -20,
+            49.224
+          ],
+          [
+            -19,
+            51.1163
+          ],
+          [
+            -18,
+            46.7212
+          ],
+          [
+            -17,
+            48.0921
+          ],
+          [
+            -16,
+            50.0596
+          ],
+          [
+            -15,
+            45.9502
+          ],
+          [
+            -14,
+            49.1823
+          ],
+          [
+            -13,
+            51.8965
+          ],
+          [
+            -12,
+            49.4133
+          ],
+          [
+            -11,
+            48.1463
+          ],
+          [
+            -10,
+            49.4517
+          ],
+          [
+            -9,
+            45.6688
+          ],
+          [
+            -8,
+            46.3143
+          ],
+          [
+            -7,
+            47.0148
+          ],
+          [
+            -6,
+            50.4896
+          ],
+          [
+            -5,
+            50.3215
+          ],
+          [
+            -4,
+            46.1547
+          ],
+          [
+            -3,
+            48.912
+          ],
+          [
+            -2,
+            46.5104
+          ],
+          [
+            -1,
+            45.1875
+          ],
+          [
+            0,
+            46.4153
+          ]
+        ],
+        "baseline": 49.2266,
+        "current": 47.2502,
+        "peak": 54.4954
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:cpu_utilization",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend cpu utilization: 35.4% \u2192 35.6% (peak 37.8%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3577
+          ],
+          [
+            -44,
+            0.3374
+          ],
+          [
+            -43,
+            0.3626
+          ],
+          [
+            -42,
+            0.3733
+          ],
+          [
+            -41,
+            0.3728
+          ],
+          [
+            -40,
+            0.3536
+          ],
+          [
+            -39,
+            0.3544
+          ],
+          [
+            -38,
+            0.3485
+          ],
+          [
+            -37,
+            0.3257
+          ],
+          [
+            -36,
+            0.3547
+          ],
+          [
+            -35,
+            0.3384
+          ],
+          [
+            -34,
+            0.3733
+          ],
+          [
+            -33,
+            0.3728
+          ],
+          [
+            -32,
+            0.3439
+          ],
+          [
+            -31,
+            0.3462
+          ],
+          [
+            -30,
+            0.3427
+          ],
+          [
+            -29,
+            0.3477
+          ],
+          [
+            -28,
+            0.3216
+          ],
+          [
+            -27,
+            0.3407
+          ],
+          [
+            -26,
+            0.3394
+          ],
+          [
+            -25,
+            0.3689
+          ],
+          [
+            -24,
+            0.3383
+          ],
+          [
+            -23,
+            0.3277
+          ],
+          [
+            -22,
+            0.3693
+          ],
+          [
+            -21,
+            0.3638
+          ],
+          [
+            -20,
+            0.3184
+          ],
+          [
+            -19,
+            0.3396
+          ],
+          [
+            -18,
+            0.353
+          ],
+          [
+            -17,
+            0.3559
+          ],
+          [
+            -16,
+            0.3595
+          ],
+          [
+            -15,
+            0.3775
+          ],
+          [
+            -14,
+            0.3677
+          ],
+          [
+            -13,
+            0.3539
+          ],
+          [
+            -12,
+            0.3728
+          ],
+          [
+            -11,
+            0.3182
+          ],
+          [
+            -10,
+            0.3112
+          ],
+          [
+            -9,
+            0.3362
+          ],
+          [
+            -8,
+            0.3467
+          ],
+          [
+            -7,
+            0.3429
+          ],
+          [
+            -6,
+            0.3734
+          ],
+          [
+            -5,
+            0.3423
+          ],
+          [
+            -4,
+            0.3714
+          ],
+          [
+            -3,
+            0.3672
+          ],
+          [
+            -2,
+            0.3485
+          ],
+          [
+            -1,
+            0.3542
+          ],
+          [
+            0,
+            0.354
+          ]
+        ],
+        "baseline": 0.3544,
+        "current": 0.3563,
+        "peak": 0.3775
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:error_rate",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend error rate: 0.4% \u2192 6.9%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0037
+          ],
+          [
+            -44,
+            0.0041
+          ],
+          [
+            -43,
+            0.0051
+          ],
+          [
+            -42,
+            0.0032
+          ],
+          [
+            -41,
+            0.0042
+          ],
+          [
+            -40,
+            0.0043
+          ],
+          [
+            -39,
+            0.0041
+          ],
+          [
+            -38,
+            0.0049
+          ],
+          [
+            -37,
+            0.0046
+          ],
+          [
+            -36,
+            0.0046
+          ],
+          [
+            -35,
+            0.0041
+          ],
+          [
+            -34,
+            0.0039
+          ],
+          [
+            -33,
+            0.0048
+          ],
+          [
+            -32,
+            0.0037
+          ],
+          [
+            -31,
+            0.0043
+          ],
+          [
+            -30,
+            0.0056
+          ],
+          [
+            -29,
+            0.0039
+          ],
+          [
+            -28,
+            0.0035
+          ],
+          [
+            -27,
+            0.0048
+          ],
+          [
+            -26,
+            0.0048
+          ],
+          [
+            -25,
+            0.0035
+          ],
+          [
+            -24,
+            0.005
+          ],
+          [
+            -23,
+            0.0048
+          ],
+          [
+            -22,
+            0.0053
+          ],
+          [
+            -21,
+            0.0033
+          ],
+          [
+            -20,
+            0.0044
+          ],
+          [
+            -19,
+            0.0049
+          ],
+          [
+            -18,
+            0.0041
+          ],
+          [
+            -17,
+            0.004
+          ],
+          [
+            -16,
+            0.0046
+          ],
+          [
+            -15,
+            0.0041
+          ],
+          [
+            -14,
+            0.0032
+          ],
+          [
+            -13,
+            0.0034
+          ],
+          [
+            -12,
+            0.0035
+          ],
+          [
+            -11,
+            0.0035
+          ],
+          [
+            -10,
+            0.004
+          ],
+          [
+            -9,
+            0.0047
+          ],
+          [
+            -8,
+            0.0306
+          ],
+          [
+            -7,
+            0.0558
+          ],
+          [
+            -6,
+            0.0675
+          ],
+          [
+            -5,
+            0.0742
+          ],
+          [
+            -4,
+            0.0713
+          ],
+          [
+            -3,
+            0.0748
+          ],
+          [
+            -2,
+            0.0655
+          ],
+          [
+            -1,
+            0.0586
+          ],
+          [
+            0,
+            0.0719
+          ]
+        ],
+        "baseline": 0.0042,
+        "current": 0.0694,
+        "peak": 0.0748
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:memory_utilization",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend memory utilization: 51.5% \u2192 52.1% (peak 55.0%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.55
+          ],
+          [
+            -44,
+            0.5153
+          ],
+          [
+            -43,
+            0.5128
+          ],
+          [
+            -42,
+            0.5034
+          ],
+          [
+            -41,
+            0.5156
+          ],
+          [
+            -40,
+            0.5318
+          ],
+          [
+            -39,
+            0.501
+          ],
+          [
+            -38,
+            0.5157
+          ],
+          [
+            -37,
+            0.4997
+          ],
+          [
+            -36,
+            0.5267
+          ],
+          [
+            -35,
+            0.5152
+          ],
+          [
+            -34,
+            0.5162
+          ],
+          [
+            -33,
+            0.5249
+          ],
+          [
+            -32,
+            0.5269
+          ],
+          [
+            -31,
+            0.4964
+          ],
+          [
+            -30,
+            0.5182
+          ],
+          [
+            -29,
+            0.5153
+          ],
+          [
+            -28,
+            0.5065
+          ],
+          [
+            -27,
+            0.5299
+          ],
+          [
+            -26,
+            0.5235
+          ],
+          [
+            -25,
+            0.5097
+          ],
+          [
+            -24,
+            0.514
+          ],
+          [
+            -23,
+            0.5381
+          ],
+          [
+            -22,
+            0.5089
+          ],
+          [
+            -21,
+            0.508
+          ],
+          [
+            -20,
+            0.5351
+          ],
+          [
+            -19,
+            0.5163
+          ],
+          [
+            -18,
+            0.5142
+          ],
+          [
+            -17,
+            0.4986
+          ],
+          [
+            -16,
+            0.5062
+          ],
+          [
+            -15,
+            0.5383
+          ],
+          [
+            -14,
+            0.5203
+          ],
+          [
+            -13,
+            0.5317
+          ],
+          [
+            -12,
+            0.5155
+          ],
+          [
+            -11,
+            0.5117
+          ],
+          [
+            -10,
+            0.5323
+          ],
+          [
+            -9,
+            0.5124
+          ],
+          [
+            -8,
+            0.4994
+          ],
+          [
+            -7,
+            0.5206
+          ],
+          [
+            -6,
+            0.5146
+          ],
+          [
+            -5,
+            0.5336
+          ],
+          [
+            -4,
+            0.5038
+          ],
+          [
+            -3,
+            0.5417
+          ],
+          [
+            -2,
+            0.518
+          ],
+          [
+            -1,
+            0.5185
+          ],
+          [
+            0,
+            0.5103
+          ]
+        ],
+        "baseline": 0.5153,
+        "current": 0.521,
+        "peak": 0.55
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:p95_latency_ms",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend p95 latency ms: 183ms \u2192 188ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            211.5781
+          ],
+          [
+            -44,
+            182.9378
+          ],
+          [
+            -43,
+            174.9415
+          ],
+          [
+            -42,
+            192.3127
+          ],
+          [
+            -41,
+            167.2158
+          ],
+          [
+            -40,
+            198.8221
+          ],
+          [
+            -39,
+            198.4027
+          ],
+          [
+            -38,
+            164.4961
+          ],
+          [
+            -37,
+            204.623
+          ],
+          [
+            -36,
+            167.8259
+          ],
+          [
+            -35,
+            165.1494
+          ],
+          [
+            -34,
+            199.9067
+          ],
+          [
+            -33,
+            201.5519
+          ],
+          [
+            -32,
+            174.0688
+          ],
+          [
+            -31,
+            204.3973
+          ],
+          [
+            -30,
+            178.3986
+          ],
+          [
+            -29,
+            182.3304
+          ],
+          [
+            -28,
+            168.6879
+          ],
+          [
+            -27,
+            177.2907
+          ],
+          [
+            -26,
+            177.4466
+          ],
+          [
+            -25,
+            184.4095
+          ],
+          [
+            -24,
+            193.3529
+          ],
+          [
+            -23,
+            177.5365
+          ],
+          [
+            -22,
+            177.3838
+          ],
+          [
+            -21,
+            184.3
+          ],
+          [
+            -20,
+            174.002
+          ],
+          [
+            -19,
+            216.2442
+          ],
+          [
+            -18,
+            173.0992
+          ],
+          [
+            -17,
+            194.9229
+          ],
+          [
+            -16,
+            214.3934
+          ],
+          [
+            -15,
+            174.2887
+          ],
+          [
+            -14,
+            192.6988
+          ],
+          [
+            -13,
+            169.0139
+          ],
+          [
+            -12,
+            180.0358
+          ],
+          [
+            -11,
+            185.0412
+          ],
+          [
+            -10,
+            171.8046
+          ],
+          [
+            -9,
+            187.7555
+          ],
+          [
+            -8,
+            182.8186
+          ],
+          [
+            -7,
+            196.7442
+          ],
+          [
+            -6,
+            169.2908
+          ],
+          [
+            -5,
+            217.3766
+          ],
+          [
+            -4,
+            200.1385
+          ],
+          [
+            -3,
+            183.7405
+          ],
+          [
+            -2,
+            180.4138
+          ],
+          [
+            -1,
+            179.5853
+          ],
+          [
+            0,
+            168.0218
+          ]
+        ],
+        "baseline": 182.9378,
+        "current": 188.2127,
+        "peak": 217.3766
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:request_rate",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend request rate: 45.3 req/s \u2192 46.5 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            41.8229
+          ],
+          [
+            -44,
+            46.2886
+          ],
+          [
+            -43,
+            46.5899
+          ],
+          [
+            -42,
+            42.2915
+          ],
+          [
+            -41,
+            41.4857
+          ],
+          [
+            -40,
+            44.7983
+          ],
+          [
+            -39,
+            47.425
+          ],
+          [
+            -38,
+            44.3299
+          ],
+          [
+            -37,
+            48.9612
+          ],
+          [
+            -36,
+            45.759
+          ],
+          [
+            -35,
+            45.3227
+          ],
+          [
+            -34,
+            46.6447
+          ],
+          [
+            -33,
+            45.2457
+          ],
+          [
+            -32,
+            47.2248
+          ],
+          [
+            -31,
+            49.2884
+          ],
+          [
+            -30,
+            44.7221
+          ],
+          [
+            -29,
+            43.0615
+          ],
+          [
+            -28,
+            45.8847
+          ],
+          [
+            -27,
+            40.5217
+          ],
+          [
+            -26,
+            44.7334
+          ],
+          [
+            -25,
+            46.4657
+          ],
+          [
+            -24,
+            44.5783
+          ],
+          [
+            -23,
+            43.1272
+          ],
+          [
+            -22,
+            44.6883
+          ],
+          [
+            -21,
+            41.6492
+          ],
+          [
+            -20,
+            48.7791
+          ],
+          [
+            -19,
+            49.7839
+          ],
+          [
+            -18,
+            49.0979
+          ],
+          [
+            -17,
+            45.9181
+          ],
+          [
+            -16,
+            44.5212
+          ],
+          [
+            -15,
+            44.92
+          ],
+          [
+            -14,
+            41.1161
+          ],
+          [
+            -13,
+            45.5174
+          ],
+          [
+            -12,
+            42.6448
+          ],
+          [
+            -11,
+            42.776
+          ],
+          [
+            -10,
+            47.0563
+          ],
+          [
+            -9,
+            47.4109
+          ],
+          [
+            -8,
+            43.2771
+          ],
+          [
+            -7,
+            48.1417
+          ],
+          [
+            -6,
+            46.1499
+          ],
+          [
+            -5,
+            49.4765
+          ],
+          [
+            -4,
+            47.1135
+          ],
+          [
+            -3,
+            45.8207
+          ],
+          [
+            -2,
+            49.1912
+          ],
+          [
+            -1,
+            44.3823
+          ],
+          [
+            0,
+            43.2713
+          ]
+        ],
+        "baseline": 45.3227,
+        "current": 46.5426,
+        "peak": 49.7839
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:cart:summary",
+      "source": "traces",
+      "service": "cart",
+      "title": "1/200 sampled cart traces failed in the last 5m; top error origin: valkey-cart",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 1,
+        "error_origins": {
+          "valkey-cart": 1
+        },
+        "latency_contributors_ms": {},
+        "p95_ms": 25.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:checkout:summary",
+      "source": "traces",
+      "service": "checkout",
+      "title": "1/200 sampled checkout traces failed in the last 5m; top error origin: currency",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 1,
+        "error_origins": {
+          "currency": 1
+        },
+        "latency_contributors_ms": {},
+        "p95_ms": 320.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend-proxy:9c01992b540d",
+      "source": "traces",
+      "service": "frontend",
+      "title": "Failing trace 9c01992b540d: frontend-proxy \u2192 frontend",
+      "detail": "TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "9c01992b540d01eda77b5584137c1fe2",
+        "spans": [
+          {
+            "service": "frontend-proxy",
+            "operation": "frontend-proxy/handle",
+            "duration_ms": 142.3,
+            "error": true,
+            "message": "rpc error calling frontend: code = Internal",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "frontend",
+            "operation": "frontend/handle",
+            "duration_ms": 124.8,
+            "error": true,
+            "message": "TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22",
+            "depth": 1,
+            "kind": "server"
+          }
+        ],
+        "origin": "frontend"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend-proxy:summary",
+      "source": "traces",
+      "service": "frontend-proxy",
+      "title": "12/200 sampled frontend-proxy traces failed in the last 5m; top error origin: frontend",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 12,
+        "error_origins": {
+          "frontend": 11,
+          "shipping": 1
+        },
+        "latency_contributors_ms": {
+          "frontend": 10.0
+        },
+        "p95_ms": 220.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend:16b301ccc577",
+      "source": "traces",
+      "service": "frontend",
+      "title": "Failing trace 16b301ccc577: frontend",
+      "detail": "TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "16b301ccc5770425b5c527a6c64f3061",
+        "spans": [
+          {
+            "service": "frontend",
+            "operation": "frontend/handle",
+            "duration_ms": 126.3,
+            "error": true,
+            "message": "TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22",
+            "depth": 0,
+            "kind": "server"
+          }
+        ],
+        "origin": "frontend"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend:summary",
+      "source": "traces",
+      "service": "frontend",
+      "title": "15/200 sampled frontend traces failed in the last 5m; top error origin: frontend",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 15,
+        "error_origins": {
+          "frontend": 14,
+          "product-catalog": 1
+        },
+        "latency_contributors_ms": {
+          "frontend": 10.0
+        },
+        "p95_ms": 190.0
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_error_origin",
+      "service": "frontend",
+      "score": 3.267,
+      "summary": "93% of failing frontend traces end in frontend",
+      "evidence_ids": [
+        "traces:frontend:summary"
+      ],
+      "data": {
+        "share": 0.9333333333333333,
+        "count": 14
+      }
+    },
+    {
+      "kind": "trace_error_origin",
+      "service": "frontend",
+      "score": 3.208,
+      "summary": "92% of failing frontend-proxy traces end in frontend",
+      "evidence_ids": [
+        "traces:frontend-proxy:summary"
+      ],
+      "data": {
+        "share": 0.9166666666666666,
+        "count": 11
+      }
+    },
+    {
+      "kind": "recent_config_change",
+      "service": "currency",
+      "score": 1.5,
+      "summary": "configmap/currency-config: DEFAULT_CURRENCY 'USD' \u2192 'USD' 5m before the alert",
+      "evidence_ids": [
+        "changes:currency:config:1"
+      ],
+      "data": {
+        "minutes_before_alert": 5.0,
+        "key": "DEFAULT_CURRENCY"
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "ad",
+      "score": 1.5,
+      "summary": "ad rolled out 2.0.2 \u2192 2.0.3 9m before the alert",
+      "evidence_ids": [
+        "changes:ad:deploy:2"
+      ],
+      "data": {
+        "minutes_before_alert": 8.6,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "frontend",
+      "score": 1.5,
+      "summary": "frontend rolled out 2.0.3 \u2192 2.0.4 9m before the alert",
+      "evidence_ids": [
+        "changes:frontend:deploy:0"
+      ],
+      "data": {
+        "minutes_before_alert": 9.0,
+        "to_version": "2.0.4"
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "frontend-proxy",
+      "score": 1.0,
+      "summary": "frontend-proxy error rate 0.4% \u2192 6.1%",
+      "evidence_ids": [
+        "metrics:frontend-proxy:error_rate"
+      ],
+      "data": {
+        "baseline": 0.0044,
+        "current": 0.0613
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "frontend",
+      "score": 1.0,
+      "summary": "frontend error rate 0.4% \u2192 6.9%",
+      "evidence_ids": [
+        "metrics:frontend:error_rate"
+      ],
+      "data": {
+        "baseline": 0.0042,
+        "current": 0.0694
+      }
+    },
+    {
+      "kind": "error_logs",
+      "service": "frontend",
+      "score": 1.0,
+      "summary": "1,701\u00d7 ERROR in frontend: TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22",
+      "evidence_ids": [
+        "logs:frontend:1"
+      ],
+      "data": {
+        "count": 1701,
+        "message": "TypeError: Cannot read properties of null (reading 'currencyCode') at ProductPrice.tsx:22"
+      }
+    },
+    {
+      "kind": "error_logs",
+      "service": "cart",
+      "score": 0.6,
+      "summary": "73\u00d7 ERROR in cart: grpc: received message larger than max (4194304 vs. 4194304)",
+      "evidence_ids": [
+        "logs:cart:1"
+      ],
+      "data": {
+        "count": 73,
+        "message": "grpc: received message larger than max (4194304 vs. 4194304)"
+      }
+    },
+    {
+      "kind": "downstream_errors",
+      "service": "frontend",
+      "score": 0.4,
+      "summary": "frontend-proxy logs 1,465 errors calling frontend",
+      "evidence_ids": [
+        "logs:frontend-proxy:1"
+      ],
+      "data": {
+        "caller": "frontend-proxy"
+      }
+    },
+    {
+      "kind": "restarts",
+      "service": "recommendation",
+      "score": 0.3,
+      "summary": "pod/recommendation-372f9d66-7f459 restarted 1\u00d7",
+      "evidence_ids": [
+        "k8s:recommendation:pod_status"
+      ],
+      "data": {}
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-01-20",
+      "title": "Payment 1.7.3 release failed card charges with a TypeError",
+      "type": "postmortem",
+      "services": [
+        "payment",
+        "checkout"
+      ],
+      "category": "bad_deploy",
+      "date": "2026-01-20",
+      "snippet": "## Summary A payment release changed the shape of the `amount` object. 35% of charges failed with `TypeError: Cannot read properties of undefined (reading 'units')`. Checkout's error-rate alert fired 9 minutes after rollout. ## Root cause Bad deploy. The new code assumed `amount.units` was always set; older clients sent `amount.nanos` only. ## Resolution `kubectl rollout undo deployment/payment`. \u2026",
+      "score": 34.234
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 24.48
+    },
+    {
+      "id": "PM-2026-08-02",
+      "title": "Currency crash loop after a release missing its data file",
+      "type": "postmortem",
+      "services": [
+        "currency",
+        "frontend",
+        "checkout"
+      ],
+      "category": "crash_loop",
+      "date": "2026-08-02",
+      "snippet": "## Summary Currency 2.0.1 shipped without `currency_conversion.json`. Pods exited on start-up (`std::runtime_error`), entered CrashLoopBackOff and frontend errors reached 60% because almost every page converts prices. ## Root cause Crash loop introduced by a bad release (packaging error). ## Resolution `kubectl rollout undo deployment/currency`. ## Lessons - `waiting: CrashLoopBackOff` + near-zero\u2026",
+      "score": 22.149
+    },
+    {
+      "id": "PM-2026-04-22",
+      "title": "Ad service CPU saturation slowed every product page",
+      "type": "postmortem",
+      "services": [
+        "ad",
+        "frontend"
+      ],
+      "category": "cpu_saturation",
+      "date": "2026-04-22",
+      "snippet": "## Summary A regex in ad targeting went quadratic on long keyword lists. Ad CPU sat at 97% of its limit with heavy throttling, p95 rose to 1.5s and frontend page latency breached its SLO. A small share of ad calls hit DEADLINE_EXCEEDED. ## Resolution Scaled ad to 4 replicas, then fixed the regex. ## Lessons - CPU at limit + `CPUThrottlingHigh` + latency on one service with no errors elsewhere = sa\u2026",
+      "score": 16.711
+    },
+    {
+      "id": "PM-2026-05-04",
+      "title": "Recommendation OOM loop from an unbounded product cache",
+      "type": "postmortem",
+      "services": [
+        "recommendation",
+        "frontend"
+      ],
+      "category": "memory_leak",
+      "date": "2026-05-04",
+      "snippet": "## Summary Recommendation was OOMKilled every ~7 minutes for two hours. Each restart dropped in-flight requests, so frontend saw periodic bursts of 5xx. Memory grew linearly from ~45% to 100% of the limit between restarts (sawtooth). ## Root cause An in-process cache keyed by product-id list had no eviction. The `recommendationCacheFailure` flag reproduces this. ## Resolution Restarted the deploym\u2026",
+      "score": 15.423
+    }
+  ],
+  "services_examined": [
+    "frontend-proxy",
+    "frontend",
+    "ad",
+    "cart",
+    "checkout"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "frontend",
+    "expected_category": "bad_deploy",
+    "predicted_service": "frontend",
+    "predicted_category": "bad_deploy",
+    "confidence": 0.92
+  },
+  "slack_posted": false
+}

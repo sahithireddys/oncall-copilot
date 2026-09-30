@@ -1,0 +1,2448 @@
+{
+  "id": "f5e902b8cd34",
+  "alert": {
+    "name": "ShippingLatencyHigh",
+    "service": "shipping",
+    "severity": "warning",
+    "summary": "shipping p95 latency > 1s for 10m",
+    "labels": {
+      "scenario_id": "quote-network-latency"
+    },
+    "starts_at": "2026-09-30T02:51:20.084819Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "quote-network-latency",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:51:20.084900Z",
+  "completed_at": "2026-09-30T02:51:54.556400Z",
+  "duration_ms": 34470,
+  "hypothesis": {
+    "root_cause_service": "shipping",
+    "category": "resource_exhaustion",
+    "title": "Shipping exhausted HTTP client pool calling quote, causing timeouts",
+    "summary": "The shipping service is experiencing client-side timeouts when calling quote due to exhausted connection pool or thread pool resources. Quote itself is healthy (p95 22ms, 0.4% errors, normal CPU/memory), but shipping's calls time out after 2000ms before quote can respond. This causes shipping's p95 latency to spike to 1605ms and error rate to jump to 13.5%. The pattern matches the cart/Redis connection-pool exhaustion incident (PM-2026-03-12).",
+    "reasoning": "The alert fired on shipping service latency (p95 > 1s). Shipping's own metrics show a dramatic spike in both latency (40ms \u2192 1605ms) and error rate (0.4% \u2192 13.5%) starting around -10m. The trace evidence is unambiguous: 96% of failing shipping traces end in quote, and quote accounts for 100% of the added latency (+1600ms). The failing trace shows shipping \u2192 quote.Call timing out after 2000ms with \"cURL error 28: Operation timed out\". However, quote's own metrics tell a completely different story: quote's p95 latency remains stable at ~22ms, its error rate is steady at 0.4%, CPU is normal at 8%, and memory is stable at ~25%. Quote is receiving requests (9.2 req/s) and responding normally according to its own telemetry. The timeout is happening on the client side (shipping) before quote can respond. This pattern matches PM-2026-03-12 where cart had Redis connection-pool exhaustion: the dependency (valkey) was healthy but the client (cart) had exhausted its connection pool. Here, shipping is likely exhausting its HTTP client connection pool or thread pool when calling quote, causing requests to queue and timeout before even reaching quote or before quote's response can be processed. The frontend deploy at -12m is a red herring\u2014it's not on the shipping\u2192quote call path and frontend's own metrics are not shown to be degraded. The mechanism is resource_exhaustion in the shipping service's client-side resources for calling quote.",
+    "confidence": 0.82,
+    "supporting_evidence": [
+      {
+        "evidence_id": "traces:shipping:8b5cfbe1a821",
+        "why_it_matters": "Shows client-side timeout (cURL error 28) in shipping's call to quote after 2000ms, indicating the problem is in shipping's client, not quote's server."
+      },
+      {
+        "evidence_id": "logs:shipping:1",
+        "why_it_matters": "826 errors in shipping all report the same client-side timeout calling quote, confirming systematic client-side resource exhaustion."
+      },
+      {
+        "evidence_id": "metrics:quote:p95_latency_ms",
+        "why_it_matters": "Quote's own p95 latency remains stable at 22ms, proving quote is responding normally and the timeout is happening before quote can complete."
+      },
+      {
+        "evidence_id": "metrics:quote:error_rate",
+        "why_it_matters": "Quote's error rate stays at baseline 0.4%, confirming quote is healthy and not the source of failures."
+      },
+      {
+        "evidence_id": "metrics:shipping:error_rate",
+        "why_it_matters": "Shipping's error rate spikes from 0.4% to 13.5% at -10m, marking the onset of the resource exhaustion."
+      },
+      {
+        "evidence_id": "traces:shipping:summary",
+        "why_it_matters": "96% of failing traces end in quote with +1600ms latency, but this is client-side delay in shipping, not server-side delay in quote."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Check shipping's HTTP client pool configuration and increase if needed",
+        "command": "kubectl describe deployment shipping -n otel-demo | grep -A 20 env",
+        "risk": "low",
+        "rationale": "Inspect shipping deployment for connection pool size, max connections, or thread pool limits. If pool is small (e.g., 8 connections like in PM-2026-03-12), increase it via ConfigMap or env var and restart shipping pods."
+      },
+      {
+        "title": "Restart shipping pods to clear any stuck connections or threads",
+        "command": "kubectl rollout restart deployment/shipping -n otel-demo",
+        "risk": "low",
+        "rationale": "A rolling restart may clear exhausted pools or stuck threads if the pool configuration is already adequate. Monitor if errors drop immediately."
+      },
+      {
+        "title": "Scale shipping horizontally to distribute load across more pods",
+        "command": "kubectl scale deployment/shipping --replicas=3 -n otel-demo",
+        "risk": "low",
+        "rationale": "If each pod has a fixed pool size, adding replicas increases total available connections. This is a temporary mitigation while investigating pool configuration."
+      }
+    ],
+    "related_documents": [
+      "PM-2026-03-12",
+      "PM-2026-07-09"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "quote",
+        "category": "network_latency",
+        "why_less_likely": "Quote's own p95 latency is stable at 22ms and its error rate is normal at 0.4%. If network latency were the issue, we would expect quote's server-side spans to show normal latency while client spans are slow, but quote's metrics show it is responding quickly. The timeouts are happening entirely on the client side in shipping."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:frontend:deploy:0",
+      "source": "changes",
+      "service": "frontend",
+      "title": "deployment/frontend rolled out 2.0.2 \u2192 2.0.3 (12m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/frontend",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 12.1
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend-proxy:pod_status",
+      "source": "k8s_events",
+      "service": "frontend-proxy",
+      "title": "pod/frontend-proxy-bbd02df3-24b4f restarts=1, last terminated: Error (exit code 137)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "pod_status",
+        "pod": "pod/frontend-proxy-bbd02df3-24b4f",
+        "phase": "Running",
+        "restarts": 1,
+        "last_termination_reason": "Error (exit code 137)",
+        "waiting_reason": null
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:shipping:1",
+      "source": "logs",
+      "service": "shipping",
+      "title": "826\u00d7 ERROR failed calling quote: cURL error 28: Operation timed out after 2000 milliseconds",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "failed calling quote: cURL error 28: Operation timed out after 2000 milliseconds",
+        "level": "ERROR",
+        "count": 826,
+        "sample": "failed calling quote: cURL error 28: Operation timed out after 2000 milliseconds",
+        "first_seen_min": -12.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:quote:cpu_utilization",
+      "source": "metrics",
+      "service": "quote",
+      "title": "quote cpu utilization: 8.0% \u2192 8.0% (peak 8.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0717
+          ],
+          [
+            -44,
+            0.0857
+          ],
+          [
+            -43,
+            0.0868
+          ],
+          [
+            -42,
+            0.0828
+          ],
+          [
+            -41,
+            0.0777
+          ],
+          [
+            -40,
+            0.0769
+          ],
+          [
+            -39,
+            0.0784
+          ],
+          [
+            -38,
+            0.0805
+          ],
+          [
+            -37,
+            0.0829
+          ],
+          [
+            -36,
+            0.0743
+          ],
+          [
+            -35,
+            0.0801
+          ],
+          [
+            -34,
+            0.0819
+          ],
+          [
+            -33,
+            0.0772
+          ],
+          [
+            -32,
+            0.08
+          ],
+          [
+            -31,
+            0.0842
+          ],
+          [
+            -30,
+            0.0799
+          ],
+          [
+            -29,
+            0.0779
+          ],
+          [
+            -28,
+            0.0886
+          ],
+          [
+            -27,
+            0.0799
+          ],
+          [
+            -26,
+            0.0752
+          ],
+          [
+            -25,
+            0.0806
+          ],
+          [
+            -24,
+            0.0712
+          ],
+          [
+            -23,
+            0.0828
+          ],
+          [
+            -22,
+            0.0784
+          ],
+          [
+            -21,
+            0.0763
+          ],
+          [
+            -20,
+            0.08
+          ],
+          [
+            -19,
+            0.0857
+          ],
+          [
+            -18,
+            0.0834
+          ],
+          [
+            -17,
+            0.0851
+          ],
+          [
+            -16,
+            0.0793
+          ],
+          [
+            -15,
+            0.0817
+          ],
+          [
+            -14,
+            0.0859
+          ],
+          [
+            -13,
+            0.0817
+          ],
+          [
+            -12,
+            0.0827
+          ],
+          [
+            -11,
+            0.0873
+          ],
+          [
+            -10,
+            0.0785
+          ],
+          [
+            -9,
+            0.0839
+          ],
+          [
+            -8,
+            0.077
+          ],
+          [
+            -7,
+            0.0861
+          ],
+          [
+            -6,
+            0.0764
+          ],
+          [
+            -5,
+            0.0769
+          ],
+          [
+            -4,
+            0.079
+          ],
+          [
+            -3,
+            0.0795
+          ],
+          [
+            -2,
+            0.084
+          ],
+          [
+            -1,
+            0.0806
+          ],
+          [
+            0,
+            0.0773
+          ]
+        ],
+        "baseline": 0.0801,
+        "current": 0.0795,
+        "peak": 0.0886
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:quote:error_rate",
+      "source": "metrics",
+      "service": "quote",
+      "title": "quote error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0046
+          ],
+          [
+            -44,
+            0.004
+          ],
+          [
+            -43,
+            0.0035
+          ],
+          [
+            -42,
+            0.005
+          ],
+          [
+            -41,
+            0.004
+          ],
+          [
+            -40,
+            0.0034
+          ],
+          [
+            -39,
+            0.0045
+          ],
+          [
+            -38,
+            0.0038
+          ],
+          [
+            -37,
+            0.0043
+          ],
+          [
+            -36,
+            0.0034
+          ],
+          [
+            -35,
+            0.0042
+          ],
+          [
+            -34,
+            0.0039
+          ],
+          [
+            -33,
+            0.0041
+          ],
+          [
+            -32,
+            0.0044
+          ],
+          [
+            -31,
+            0.0042
+          ],
+          [
+            -30,
+            0.0026
+          ],
+          [
+            -29,
+            0.0051
+          ],
+          [
+            -28,
+            0.0033
+          ],
+          [
+            -27,
+            0.0038
+          ],
+          [
+            -26,
+            0.0047
+          ],
+          [
+            -25,
+            0.0032
+          ],
+          [
+            -24,
+            0.0037
+          ],
+          [
+            -23,
+            0.0049
+          ],
+          [
+            -22,
+            0.0039
+          ],
+          [
+            -21,
+            0.0056
+          ],
+          [
+            -20,
+            0.0059
+          ],
+          [
+            -19,
+            0.0046
+          ],
+          [
+            -18,
+            0.0047
+          ],
+          [
+            -17,
+            0.0041
+          ],
+          [
+            -16,
+            0.0044
+          ],
+          [
+            -15,
+            0.0044
+          ],
+          [
+            -14,
+            0.0044
+          ],
+          [
+            -13,
+            0.004
+          ],
+          [
+            -12,
+            0.0034
+          ],
+          [
+            -11,
+            0.0051
+          ],
+          [
+            -10,
+            0.0037
+          ],
+          [
+            -9,
+            0.0036
+          ],
+          [
+            -8,
+            0.0034
+          ],
+          [
+            -7,
+            0.0045
+          ],
+          [
+            -6,
+            0.0044
+          ],
+          [
+            -5,
+            0.0047
+          ],
+          [
+            -4,
+            0.0031
+          ],
+          [
+            -3,
+            0.0046
+          ],
+          [
+            -2,
+            0.0042
+          ],
+          [
+            -1,
+            0.0037
+          ],
+          [
+            0,
+            0.0044
+          ]
+        ],
+        "baseline": 0.004,
+        "current": 0.0041,
+        "peak": 0.0059
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:quote:memory_utilization",
+      "source": "metrics",
+      "service": "quote",
+      "title": "quote memory utilization: 24.7% \u2192 24.9% (peak 26.2%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2446
+          ],
+          [
+            -44,
+            0.2448
+          ],
+          [
+            -43,
+            0.2573
+          ],
+          [
+            -42,
+            0.2485
+          ],
+          [
+            -41,
+            0.247
+          ],
+          [
+            -40,
+            0.2577
+          ],
+          [
+            -39,
+            0.2433
+          ],
+          [
+            -38,
+            0.2551
+          ],
+          [
+            -37,
+            0.2474
+          ],
+          [
+            -36,
+            0.243
+          ],
+          [
+            -35,
+            0.2485
+          ],
+          [
+            -34,
+            0.2521
+          ],
+          [
+            -33,
+            0.2592
+          ],
+          [
+            -32,
+            0.2443
+          ],
+          [
+            -31,
+            0.2442
+          ],
+          [
+            -30,
+            0.2454
+          ],
+          [
+            -29,
+            0.2585
+          ],
+          [
+            -28,
+            0.256
+          ],
+          [
+            -27,
+            0.2448
+          ],
+          [
+            -26,
+            0.2478
+          ],
+          [
+            -25,
+            0.2531
+          ],
+          [
+            -24,
+            0.2539
+          ],
+          [
+            -23,
+            0.2496
+          ],
+          [
+            -22,
+            0.2469
+          ],
+          [
+            -21,
+            0.2549
+          ],
+          [
+            -20,
+            0.2463
+          ],
+          [
+            -19,
+            0.2488
+          ],
+          [
+            -18,
+            0.2368
+          ],
+          [
+            -17,
+            0.2621
+          ],
+          [
+            -16,
+            0.2522
+          ],
+          [
+            -15,
+            0.2612
+          ],
+          [
+            -14,
+            0.251
+          ],
+          [
+            -13,
+            0.2508
+          ],
+          [
+            -12,
+            0.2592
+          ],
+          [
+            -11,
+            0.2521
+          ],
+          [
+            -10,
+            0.2547
+          ],
+          [
+            -9,
+            0.2454
+          ],
+          [
+            -8,
+            0.2528
+          ],
+          [
+            -7,
+            0.2451
+          ],
+          [
+            -6,
+            0.2482
+          ],
+          [
+            -5,
+            0.2535
+          ],
+          [
+            -4,
+            0.2534
+          ],
+          [
+            -3,
+            0.2514
+          ],
+          [
+            -2,
+            0.2454
+          ],
+          [
+            -1,
+            0.2442
+          ],
+          [
+            0,
+            0.2474
+          ]
+        ],
+        "baseline": 0.2474,
+        "current": 0.2492,
+        "peak": 0.2621
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:quote:p95_latency_ms",
+      "source": "metrics",
+      "service": "quote",
+      "title": "quote p95 latency ms: 22ms \u2192 22ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            22.7398
+          ],
+          [
+            -44,
+            24.3465
+          ],
+          [
+            -43,
+            25.022
+          ],
+          [
+            -42,
+            21.1211
+          ],
+          [
+            -41,
+            19.7587
+          ],
+          [
+            -40,
+            23.7834
+          ],
+          [
+            -39,
+            19.1302
+          ],
+          [
+            -38,
+            20.4424
+          ],
+          [
+            -37,
+            22.3628
+          ],
+          [
+            -36,
+            22.2061
+          ],
+          [
+            -35,
+            23.6676
+          ],
+          [
+            -34,
+            23.9943
+          ],
+          [
+            -33,
+            21.3186
+          ],
+          [
+            -32,
+            20.7932
+          ],
+          [
+            -31,
+            24.7193
+          ],
+          [
+            -30,
+            20.7427
+          ],
+          [
+            -29,
+            23.0768
+          ],
+          [
+            -28,
+            21.1174
+          ],
+          [
+            -27,
+            24.0863
+          ],
+          [
+            -26,
+            20.1734
+          ],
+          [
+            -25,
+            21.0669
+          ],
+          [
+            -24,
+            22.9467
+          ],
+          [
+            -23,
+            21.4142
+          ],
+          [
+            -22,
+            22.9458
+          ],
+          [
+            -21,
+            21.6665
+          ],
+          [
+            -20,
+            20.0734
+          ],
+          [
+            -19,
+            22.1008
+          ],
+          [
+            -18,
+            20.7328
+          ],
+          [
+            -17,
+            20.1736
+          ],
+          [
+            -16,
+            22.1025
+          ],
+          [
+            -15,
+            21.5941
+          ],
+          [
+            -14,
+            23.1581
+          ],
+          [
+            -13,
+            24.2735
+          ],
+          [
+            -12,
+            21.4448
+          ],
+          [
+            -11,
+            24.0014
+          ],
+          [
+            -10,
+            22.9317
+          ],
+          [
+            -9,
+            21.8152
+          ],
+          [
+            -8,
+            23.9444
+          ],
+          [
+            -7,
+            23.1627
+          ],
+          [
+            -6,
+            21.0272
+          ],
+          [
+            -5,
+            21.1204
+          ],
+          [
+            -4,
+            21.3915
+          ],
+          [
+            -3,
+            20.5426
+          ],
+          [
+            -2,
+            23.3915
+          ],
+          [
+            -1,
+            20.0557
+          ],
+          [
+            0,
+            25.3627
+          ]
+        ],
+        "baseline": 22.3628,
+        "current": 21.9774,
+        "peak": 25.3627
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:quote:request_rate",
+      "source": "metrics",
+      "service": "quote",
+      "title": "quote request rate: 8.9 req/s \u2192 9.2 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            8.8239
+          ],
+          [
+            -44,
+            8.67
+          ],
+          [
+            -43,
+            9.5659
+          ],
+          [
+            -42,
+            8.8404
+          ],
+          [
+            -41,
+            9.8623
+          ],
+          [
+            -40,
+            8.888
+          ],
+          [
+            -39,
+            8.8691
+          ],
+          [
+            -38,
+            8.0604
+          ],
+          [
+            -37,
+            8.8607
+          ],
+          [
+            -36,
+            9.435
+          ],
+          [
+            -35,
+            8.8406
+          ],
+          [
+            -34,
+            9.3137
+          ],
+          [
+            -33,
+            8.6819
+          ],
+          [
+            -32,
+            9.3899
+          ],
+          [
+            -31,
+            10.0127
+          ],
+          [
+            -30,
+            9.3875
+          ],
+          [
+            -29,
+            7.7378
+          ],
+          [
+            -28,
+            8.7487
+          ],
+          [
+            -27,
+            8.6095
+          ],
+          [
+            -26,
+            9.1759
+          ],
+          [
+            -25,
+            10.2001
+          ],
+          [
+            -24,
+            8.7561
+          ],
+          [
+            -23,
+            8.7552
+          ],
+          [
+            -22,
+            8.6313
+          ],
+          [
+            -21,
+            9.0268
+          ],
+          [
+            -20,
+            8.8568
+          ],
+          [
+            -19,
+            9.4706
+          ],
+          [
+            -18,
+            8.6616
+          ],
+          [
+            -17,
+            8.942
+          ],
+          [
+            -16,
+            8.8059
+          ],
+          [
+            -15,
+            8.8127
+          ],
+          [
+            -14,
+            9.3717
+          ],
+          [
+            -13,
+            9.3437
+          ],
+          [
+            -12,
+            8.6999
+          ],
+          [
+            -11,
+            9.218
+          ],
+          [
+            -10,
+            10.2026
+          ],
+          [
+            -9,
+            8.7675
+          ],
+          [
+            -8,
+            9.2972
+          ],
+          [
+            -7,
+            8.688
+          ],
+          [
+            -6,
+            8.7505
+          ],
+          [
+            -5,
+            8.9641
+          ],
+          [
+            -4,
+            9.6919
+          ],
+          [
+            -3,
+            8.6267
+          ],
+          [
+            -2,
+            9.1973
+          ],
+          [
+            -1,
+            9.5648
+          ],
+          [
+            0,
+            9.2315
+          ]
+        ],
+        "baseline": 8.8607,
+        "current": 9.2127,
+        "peak": 10.2026
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:shipping:cpu_utilization",
+      "source": "metrics",
+      "service": "shipping",
+      "title": "shipping cpu utilization: 10.3% \u2192 10.4% (peak 11.1%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1048
+          ],
+          [
+            -44,
+            0.1042
+          ],
+          [
+            -43,
+            0.1033
+          ],
+          [
+            -42,
+            0.0996
+          ],
+          [
+            -41,
+            0.1048
+          ],
+          [
+            -40,
+            0.0975
+          ],
+          [
+            -39,
+            0.0933
+          ],
+          [
+            -38,
+            0.1004
+          ],
+          [
+            -37,
+            0.1114
+          ],
+          [
+            -36,
+            0.1064
+          ],
+          [
+            -35,
+            0.1021
+          ],
+          [
+            -34,
+            0.0923
+          ],
+          [
+            -33,
+            0.0965
+          ],
+          [
+            -32,
+            0.1041
+          ],
+          [
+            -31,
+            0.0982
+          ],
+          [
+            -30,
+            0.0967
+          ],
+          [
+            -29,
+            0.1022
+          ],
+          [
+            -28,
+            0.0904
+          ],
+          [
+            -27,
+            0.0991
+          ],
+          [
+            -26,
+            0.1023
+          ],
+          [
+            -25,
+            0.1016
+          ],
+          [
+            -24,
+            0.0962
+          ],
+          [
+            -23,
+            0.101
+          ],
+          [
+            -22,
+            0.099
+          ],
+          [
+            -21,
+            0.1009
+          ],
+          [
+            -20,
+            0.0912
+          ],
+          [
+            -19,
+            0.1057
+          ],
+          [
+            -18,
+            0.0971
+          ],
+          [
+            -17,
+            0.098
+          ],
+          [
+            -16,
+            0.0941
+          ],
+          [
+            -15,
+            0.0964
+          ],
+          [
+            -14,
+            0.1047
+          ],
+          [
+            -13,
+            0.1046
+          ],
+          [
+            -12,
+            0.1053
+          ],
+          [
+            -11,
+            0.1054
+          ],
+          [
+            -10,
+            0.0928
+          ],
+          [
+            -9,
+            0.0993
+          ],
+          [
+            -8,
+            0.0863
+          ],
+          [
+            -7,
+            0.1004
+          ],
+          [
+            -6,
+            0.101
+          ],
+          [
+            -5,
+            0.0933
+          ],
+          [
+            -4,
+            0.1092
+          ],
+          [
+            -3,
+            0.1043
+          ],
+          [
+            -2,
+            0.1034
+          ],
+          [
+            -1,
+            0.1038
+          ],
+          [
+            0,
+            0.1089
+          ]
+        ],
+        "baseline": 0.1033,
+        "current": 0.1038,
+        "peak": 0.1114
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:shipping:error_rate",
+      "source": "metrics",
+      "service": "shipping",
+      "title": "shipping error rate: 0.4% \u2192 13.5%",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0039
+          ],
+          [
+            -44,
+            0.0039
+          ],
+          [
+            -43,
+            0.0038
+          ],
+          [
+            -42,
+            0.0034
+          ],
+          [
+            -41,
+            0.005
+          ],
+          [
+            -40,
+            0.0037
+          ],
+          [
+            -39,
+            0.0039
+          ],
+          [
+            -38,
+            0.0039
+          ],
+          [
+            -37,
+            0.0039
+          ],
+          [
+            -36,
+            0.0033
+          ],
+          [
+            -35,
+            0.0028
+          ],
+          [
+            -34,
+            0.0034
+          ],
+          [
+            -33,
+            0.0047
+          ],
+          [
+            -32,
+            0.0046
+          ],
+          [
+            -31,
+            0.0041
+          ],
+          [
+            -30,
+            0.0032
+          ],
+          [
+            -29,
+            0.0042
+          ],
+          [
+            -28,
+            0.0029
+          ],
+          [
+            -27,
+            0.0046
+          ],
+          [
+            -26,
+            0.0045
+          ],
+          [
+            -25,
+            0.0044
+          ],
+          [
+            -24,
+            0.0041
+          ],
+          [
+            -23,
+            0.0041
+          ],
+          [
+            -22,
+            0.0048
+          ],
+          [
+            -21,
+            0.0052
+          ],
+          [
+            -20,
+            0.0044
+          ],
+          [
+            -19,
+            0.0049
+          ],
+          [
+            -18,
+            0.004
+          ],
+          [
+            -17,
+            0.0048
+          ],
+          [
+            -16,
+            0.0042
+          ],
+          [
+            -15,
+            0.0037
+          ],
+          [
+            -14,
+            0.0039
+          ],
+          [
+            -13,
+            0.0031
+          ],
+          [
+            -12,
+            0.0041
+          ],
+          [
+            -11,
+            0.0719
+          ],
+          [
+            -10,
+            0.182
+          ],
+          [
+            -9,
+            0.0917
+          ],
+          [
+            -8,
+            0.0992
+          ],
+          [
+            -7,
+            0.1198
+          ],
+          [
+            -6,
+            0.1102
+          ],
+          [
+            -5,
+            0.1411
+          ],
+          [
+            -4,
+            0.1287
+          ],
+          [
+            -3,
+            0.1434
+          ],
+          [
+            -2,
+            0.1424
+          ],
+          [
+            -1,
+            0.131
+          ],
+          [
+            0,
+            0.123
+          ]
+        ],
+        "baseline": 0.0039,
+        "current": 0.1349,
+        "peak": 0.182
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:shipping:memory_utilization",
+      "source": "metrics",
+      "service": "shipping",
+      "title": "shipping memory utilization: 28.2% \u2192 28.1% (peak 29.1%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2812
+          ],
+          [
+            -44,
+            0.28
+          ],
+          [
+            -43,
+            0.283
+          ],
+          [
+            -42,
+            0.2819
+          ],
+          [
+            -41,
+            0.289
+          ],
+          [
+            -40,
+            0.2791
+          ],
+          [
+            -39,
+            0.2854
+          ],
+          [
+            -38,
+            0.2821
+          ],
+          [
+            -37,
+            0.2777
+          ],
+          [
+            -36,
+            0.2843
+          ],
+          [
+            -35,
+            0.2716
+          ],
+          [
+            -34,
+            0.2859
+          ],
+          [
+            -33,
+            0.2739
+          ],
+          [
+            -32,
+            0.2743
+          ],
+          [
+            -31,
+            0.2827
+          ],
+          [
+            -30,
+            0.2803
+          ],
+          [
+            -29,
+            0.283
+          ],
+          [
+            -28,
+            0.2773
+          ],
+          [
+            -27,
+            0.287
+          ],
+          [
+            -26,
+            0.2747
+          ],
+          [
+            -25,
+            0.2867
+          ],
+          [
+            -24,
+            0.2864
+          ],
+          [
+            -23,
+            0.2658
+          ],
+          [
+            -22,
+            0.2835
+          ],
+          [
+            -21,
+            0.2844
+          ],
+          [
+            -20,
+            0.2715
+          ],
+          [
+            -19,
+            0.276
+          ],
+          [
+            -18,
+            0.2758
+          ],
+          [
+            -17,
+            0.276
+          ],
+          [
+            -16,
+            0.2809
+          ],
+          [
+            -15,
+            0.2754
+          ],
+          [
+            -14,
+            0.2878
+          ],
+          [
+            -13,
+            0.2867
+          ],
+          [
+            -12,
+            0.2909
+          ],
+          [
+            -11,
+            0.2891
+          ],
+          [
+            -10,
+            0.2808
+          ],
+          [
+            -9,
+            0.2776
+          ],
+          [
+            -8,
+            0.2806
+          ],
+          [
+            -7,
+            0.2806
+          ],
+          [
+            -6,
+            0.2867
+          ],
+          [
+            -5,
+            0.2804
+          ],
+          [
+            -4,
+            0.2912
+          ],
+          [
+            -3,
+            0.2698
+          ],
+          [
+            -2,
+            0.2813
+          ],
+          [
+            -1,
+            0.285
+          ],
+          [
+            0,
+            0.2785
+          ]
+        ],
+        "baseline": 0.2819,
+        "current": 0.281,
+        "peak": 0.2912
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:shipping:p95_latency_ms",
+      "source": "metrics",
+      "service": "shipping",
+      "title": "shipping p95 latency ms: 40ms \u2192 1605ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            36.3056
+          ],
+          [
+            -44,
+            38.5022
+          ],
+          [
+            -43,
+            41.0977
+          ],
+          [
+            -42,
+            43.5905
+          ],
+          [
+            -41,
+            40.7349
+          ],
+          [
+            -40,
+            42.7229
+          ],
+          [
+            -39,
+            40.8008
+          ],
+          [
+            -38,
+            38.4381
+          ],
+          [
+            -37,
+            35.5616
+          ],
+          [
+            -36,
+            36.2637
+          ],
+          [
+            -35,
+            39.9397
+          ],
+          [
+            -34,
+            36.8381
+          ],
+          [
+            -33,
+            41.9213
+          ],
+          [
+            -32,
+            40.7372
+          ],
+          [
+            -31,
+            49.2779
+          ],
+          [
+            -30,
+            32.9025
+          ],
+          [
+            -29,
+            43.2804
+          ],
+          [
+            -28,
+            39.3326
+          ],
+          [
+            -27,
+            45.1463
+          ],
+          [
+            -26,
+            41.1827
+          ],
+          [
+            -25,
+            36.9599
+          ],
+          [
+            -24,
+            34.4168
+          ],
+          [
+            -23,
+            38.9657
+          ],
+          [
+            -22,
+            40.9955
+          ],
+          [
+            -21,
+            42.4845
+          ],
+          [
+            -20,
+            40.7014
+          ],
+          [
+            -19,
+            41.4252
+          ],
+          [
+            -18,
+            40.7848
+          ],
+          [
+            -17,
+            38.3081
+          ],
+          [
+            -16,
+            36.5285
+          ],
+          [
+            -15,
+            32.0826
+          ],
+          [
+            -14,
+            39.7571
+          ],
+          [
+            -13,
+            36.1236
+          ],
+          [
+            -12,
+            40.1359
+          ],
+          [
+            -11,
+            890.0567
+          ],
+          [
+            -10,
+            1619.6839
+          ],
+          [
+            -9,
+            1535.1136
+          ],
+          [
+            -8,
+            1676.1552
+          ],
+          [
+            -7,
+            1637.8674
+          ],
+          [
+            -6,
+            1596.4325
+          ],
+          [
+            -5,
+            1588.175
+          ],
+          [
+            -4,
+            1707.9015
+          ],
+          [
+            -3,
+            1630.1665
+          ],
+          [
+            -2,
+            1597.7642
+          ],
+          [
+            -1,
+            1762.1931
+          ],
+          [
+            0,
+            1342.9891
+          ]
+        ],
+        "baseline": 39.9397,
+        "current": 1604.8649,
+        "peak": 1762.1931
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:shipping:request_rate",
+      "source": "metrics",
+      "service": "shipping",
+      "title": "shipping request rate: 8.8 req/s \u2192 8.7 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            8.9817
+          ],
+          [
+            -44,
+            9.2121
+          ],
+          [
+            -43,
+            8.579
+          ],
+          [
+            -42,
+            9.5194
+          ],
+          [
+            -41,
+            8.3543
+          ],
+          [
+            -40,
+            8.6534
+          ],
+          [
+            -39,
+            8.7079
+          ],
+          [
+            -38,
+            9.6596
+          ],
+          [
+            -37,
+            8.6961
+          ],
+          [
+            -36,
+            8.7847
+          ],
+          [
+            -35,
+            9.1265
+          ],
+          [
+            -34,
+            8.7409
+          ],
+          [
+            -33,
+            9.3907
+          ],
+          [
+            -32,
+            7.9905
+          ],
+          [
+            -31,
+            9.0341
+          ],
+          [
+            -30,
+            9.5886
+          ],
+          [
+            -29,
+            8.7457
+          ],
+          [
+            -28,
+            8.2442
+          ],
+          [
+            -27,
+            8.6401
+          ],
+          [
+            -26,
+            9.3967
+          ],
+          [
+            -25,
+            9.393
+          ],
+          [
+            -24,
+            8.7587
+          ],
+          [
+            -23,
+            9.351
+          ],
+          [
+            -22,
+            9.4378
+          ],
+          [
+            -21,
+            8.4717
+          ],
+          [
+            -20,
+            8.0905
+          ],
+          [
+            -19,
+            8.4361
+          ],
+          [
+            -18,
+            8.9829
+          ],
+          [
+            -17,
+            8.6069
+          ],
+          [
+            -16,
+            8.7814
+          ],
+          [
+            -15,
+            8.9795
+          ],
+          [
+            -14,
+            8.8664
+          ],
+          [
+            -13,
+            9.3489
+          ],
+          [
+            -12,
+            9.8034
+          ],
+          [
+            -11,
+            8.3215
+          ],
+          [
+            -10,
+            8.8949
+          ],
+          [
+            -9,
+            9.2725
+          ],
+          [
+            -8,
+            9.0614
+          ],
+          [
+            -7,
+            9.2168
+          ],
+          [
+            -6,
+            8.9642
+          ],
+          [
+            -5,
+            8.9254
+          ],
+          [
+            -4,
+            8.9849
+          ],
+          [
+            -3,
+            8.8419
+          ],
+          [
+            -2,
+            8.2385
+          ],
+          [
+            -1,
+            8.4459
+          ],
+          [
+            0,
+            8.8208
+          ]
+        ],
+        "baseline": 8.7847,
+        "current": 8.7096,
+        "peak": 9.8034
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:shipping:8b5cfbe1a821",
+      "source": "traces",
+      "service": "quote",
+      "title": "Failing trace 8b5cfbe1a821: shipping \u2192 quote.Call",
+      "detail": "cURL error 28: Operation timed out after 2000 milliseconds",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "8b5cfbe1a82147f54a8f7f7beb7de611",
+        "spans": [
+          {
+            "service": "shipping",
+            "operation": "shipping/handle",
+            "duration_ms": 1626.4,
+            "error": true,
+            "message": "rpc error calling quote: code = Unavailable",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "shipping",
+            "operation": "quote.Call",
+            "duration_ms": 1622.0,
+            "error": true,
+            "message": "cURL error 28: Operation timed out after 2000 milliseconds",
+            "depth": 1,
+            "kind": "client",
+            "peer_service": "quote"
+          }
+        ],
+        "origin": "quote"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:shipping:summary",
+      "source": "traces",
+      "service": "shipping",
+      "title": "26/200 sampled shipping traces failed in the last 5m; top error origin: quote",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 26,
+        "error_origins": {
+          "quote": 25,
+          "shipping": 1
+        },
+        "latency_contributors_ms": {
+          "quote": 1600.0
+        },
+        "p95_ms": 1640.0
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_error_origin",
+      "service": "quote",
+      "score": 3.365,
+      "summary": "96% of failing shipping traces end in quote",
+      "evidence_ids": [
+        "traces:shipping:summary"
+      ],
+      "data": {
+        "share": 0.9615384615384616,
+        "count": 25
+      }
+    },
+    {
+      "kind": "trace_latency_origin",
+      "service": "quote",
+      "score": 3.0,
+      "summary": "quote accounts for 100% of added latency in shipping traces (+1600ms)",
+      "evidence_ids": [
+        "traces:shipping:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 1600.0
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "frontend",
+      "score": 1.5,
+      "summary": "frontend rolled out 2.0.2 \u2192 2.0.3 12m before the alert",
+      "evidence_ids": [
+        "changes:frontend:deploy:0"
+      ],
+      "data": {
+        "minutes_before_alert": 12.1,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "error_spike",
+      "service": "shipping",
+      "score": 1.0,
+      "summary": "shipping error rate 0.4% \u2192 13.5%",
+      "evidence_ids": [
+        "metrics:shipping:error_rate"
+      ],
+      "data": {
+        "baseline": 0.0039,
+        "current": 0.1349
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "shipping",
+      "score": 0.8,
+      "summary": "shipping p95 40ms \u2192 1605ms",
+      "evidence_ids": [
+        "metrics:shipping:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 39.9397,
+        "current": 1604.8649
+      }
+    },
+    {
+      "kind": "client_timeout",
+      "service": "quote",
+      "score": 0.8,
+      "summary": "calls to quote time out on the client side (1622.0ms)",
+      "evidence_ids": [
+        "traces:shipping:8b5cfbe1a821"
+      ],
+      "data": {
+        "message": "cURL error 28: Operation timed out after 2000 milliseconds"
+      }
+    },
+    {
+      "kind": "downstream_errors",
+      "service": "quote",
+      "score": 0.4,
+      "summary": "shipping logs 826 errors calling quote",
+      "evidence_ids": [
+        "logs:shipping:1"
+      ],
+      "data": {
+        "caller": "shipping"
+      }
+    },
+    {
+      "kind": "restarts",
+      "service": "frontend-proxy",
+      "score": 0.3,
+      "summary": "pod/frontend-proxy-bbd02df3-24b4f restarted 1\u00d7",
+      "evidence_ids": [
+        "k8s:frontend-proxy:pod_status"
+      ],
+      "data": {}
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-07-09",
+      "title": "Shipping failed after a quote address change",
+      "type": "postmortem",
+      "services": [
+        "shipping",
+        "quote",
+        "checkout"
+      ],
+      "category": "config_change",
+      "date": "2026-07-09",
+      "snippet": "## Summary A Helm values change renamed the quote service address. Shipping could not resolve `quote-svc` and 90% of checkouts failed at the shipping step with `dns error`. ## Root cause Configuration change on shipping (QUOTE_ADDR). Quote itself was healthy and idle. ## Resolution Reverted the env var and redeployed shipping. ## Lessons - `no such host` / `dns error` in a caller plus an idle call\u2026",
+      "score": 39.116
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 26.275
+    },
+    {
+      "id": "PM-2026-05-04",
+      "title": "Recommendation OOM loop from an unbounded product cache",
+      "type": "postmortem",
+      "services": [
+        "recommendation",
+        "frontend"
+      ],
+      "category": "memory_leak",
+      "date": "2026-05-04",
+      "snippet": "## Summary Recommendation was OOMKilled every ~7 minutes for two hours. Each restart dropped in-flight requests, so frontend saw periodic bursts of 5xx. Memory grew linearly from ~45% to 100% of the limit between restarts (sawtooth). ## Root cause An in-process cache keyed by product-id list had no eviction. The `recommendationCacheFailure` flag reproduces this. ## Resolution Restarted the deploym\u2026",
+      "score": 18.043
+    },
+    {
+      "id": "PM-2026-01-20",
+      "title": "Payment 1.7.3 release failed card charges with a TypeError",
+      "type": "postmortem",
+      "services": [
+        "payment",
+        "checkout"
+      ],
+      "category": "bad_deploy",
+      "date": "2026-01-20",
+      "snippet": "## Summary A payment release changed the shape of the `amount` object. 35% of charges failed with `TypeError: Cannot read properties of undefined (reading 'units')`. Checkout's error-rate alert fired 9 minutes after rollout. ## Root cause Bad deploy. The new code assumed `amount.units` was always set; older clients sent `amount.nanos` only. ## Resolution `kubectl rollout undo deployment/payment`. \u2026",
+      "score": 16.721
+    },
+    {
+      "id": "PM-2026-04-22",
+      "title": "Ad service CPU saturation slowed every product page",
+      "type": "postmortem",
+      "services": [
+        "ad",
+        "frontend"
+      ],
+      "category": "cpu_saturation",
+      "date": "2026-04-22",
+      "snippet": "## Summary A regex in ad targeting went quadratic on long keyword lists. Ad CPU sat at 97% of its limit with heavy throttling, p95 rose to 1.5s and frontend page latency breached its SLO. A small share of ad calls hit DEADLINE_EXCEEDED. ## Resolution Scaled ad to 4 replicas, then fixed the regex. ## Lessons - CPU at limit + `CPUThrottlingHigh` + latency on one service with no errors elsewhere = sa\u2026",
+      "score": 14.962
+    }
+  ],
+  "services_examined": [
+    "shipping",
+    "quote"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": false,
+    "category_correct": false,
+    "correct": false,
+    "service_in_top3": true,
+    "score": 0.0,
+    "expected_service": "quote",
+    "expected_category": "network_latency",
+    "predicted_service": "shipping",
+    "predicted_category": "resource_exhaustion",
+    "confidence": 0.82
+  },
+  "slack_posted": false
+}

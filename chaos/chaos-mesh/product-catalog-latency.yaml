@@ -1,0 +1,18 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: product-catalog-latency
+  namespace: otel-demo
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces: [otel-demo]
+    labelSelectors:
+      app.kubernetes.io/name: product-catalog
+  delay:
+    latency: "950ms"
+    jitter: "150ms"
+    correlation: "25"
+  direction: to
+  duration: "30m"

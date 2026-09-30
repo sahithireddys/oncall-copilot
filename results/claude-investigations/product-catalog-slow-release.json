@@ -1,0 +1,3683 @@
+{
+  "id": "3815ccd29e67",
+  "alert": {
+    "name": "FrontendLatencyHigh",
+    "service": "frontend",
+    "severity": "warning",
+    "summary": "frontend p95 latency > 1s for 10m",
+    "labels": {
+      "scenario_id": "product-catalog-slow-release"
+    },
+    "starts_at": "2026-09-30T02:50:27.351845Z",
+    "fingerprint": null
+  },
+  "status": "completed",
+  "scenario_id": "product-catalog-slow-release",
+  "reasoner": "claude",
+  "telemetry_mode": "simulated",
+  "created_at": "2026-09-30T02:50:27.352192Z",
+  "completed_at": "2026-09-30T02:50:59.188706Z",
+  "duration_ms": 31835,
+  "hypothesis": {
+    "root_cause_service": "product-catalog",
+    "category": "bad_deploy",
+    "title": "product-catalog 2.0.3 rollout causes slow product listing and timeouts",
+    "summary": "Product-catalog was deployed to version 2.0.3 at -17m. Immediately after, its p95 latency jumped from 18ms to 1021ms and it began logging \"context deadline exceeded while listing products\" errors (530 occurrences). This latency propagated upstream to frontend, causing frontend's p95 to rise from 187ms to 1682ms and triggering the alert. PostgreSQL metrics remain healthy (4ms p95, stable CPU), ruling out datastore degradation.",
+    "reasoning": "The alert fired on frontend p95 latency exceeding 1s. Traces show that product-catalog is the origin of the added latency (+1497ms in frontend traces, +950ms in product-catalog's own traces). Product-catalog's p95 latency jumped from 18ms to 1021ms at -15m, and frontend's p95 followed from 187ms to 1682ms. The error logs show 530 instances of \"context deadline exceeded while listing products\" in product-catalog, first seen at -17m. Three deployments occurred: product-catalog 2.0.2\u21922.0.3 at -17m, frontend at -8m, and currency at -4m. The product-catalog deploy timing (-17m) aligns precisely with when its latency spiked (-15m) and errors began (-17m). Product-catalog is on the failing path (frontend\u2192product-catalog), and its symptoms started immediately after its own deploy. PostgreSQL, product-catalog's dependency, shows healthy metrics: p95 latency stable at 4ms, CPU at 12%, no error rate increase. The frontend and currency deploys are red herrings\u2014frontend's deploy happened 9 minutes after product-catalog's symptoms began, and currency is not on the failing trace path. The mechanism is a bad deploy in product-catalog that introduced slow database queries or inefficient product listing logic, causing timeouts.",
+    "confidence": 0.85,
+    "supporting_evidence": [
+      {
+        "evidence_id": "changes:product-catalog:deploy:0",
+        "why_it_matters": "Product-catalog rolled out 2.0.2\u21922.0.3 at -17m, precisely when errors and latency began, establishing temporal causality."
+      },
+      {
+        "evidence_id": "logs:product-catalog:1",
+        "why_it_matters": "530 ERROR logs 'context deadline exceeded while listing products' first seen at -17m confirm product-catalog is timing out on its core operation immediately after deploy."
+      },
+      {
+        "evidence_id": "metrics:product-catalog:p95_latency_ms",
+        "why_it_matters": "Product-catalog p95 latency spiked from 18ms to 1021ms at -15m, a 56\u00d7 increase, showing the service itself became slow after the deploy."
+      },
+      {
+        "evidence_id": "traces:frontend:summary",
+        "why_it_matters": "Traces attribute 100% of added frontend latency (+1497ms) to product-catalog, confirming it is the origin, not a victim."
+      },
+      {
+        "evidence_id": "metrics:postgresql:p95_latency_ms",
+        "why_it_matters": "PostgreSQL p95 remains stable at 4ms with no spike, ruling out datastore degradation and confirming the fault is in product-catalog's new code."
+      },
+      {
+        "evidence_id": "changes:frontend:deploy:1",
+        "why_it_matters": "Frontend deployed at -8m, 9 minutes after product-catalog symptoms began at -17m, so it is a red herring and not the root cause."
+      }
+    ],
+    "suggested_actions": [
+      {
+        "title": "Rollback product-catalog to version 2.0.2",
+        "command": "kubectl -n otel-demo rollout undo deployment/product-catalog",
+        "risk": "low",
+        "rationale": "The 2.0.3 deploy introduced the latency and errors. Rolling back to the last known good version (2.0.2) should immediately restore p95 latency to ~18ms and eliminate timeouts."
+      },
+      {
+        "title": "Inspect product-catalog 2.0.3 code changes for inefficient queries",
+        "command": null,
+        "risk": "low",
+        "rationale": "Review the diff between 2.0.2 and 2.0.3 for changes to product listing logic, database queries, or ORM usage that could cause the 56\u00d7 latency increase. Look for N+1 queries, missing indexes, or removed query limits."
+      },
+      {
+        "title": "Scale product-catalog replicas to reduce per-instance load temporarily",
+        "command": "kubectl -n otel-demo scale deployment/product-catalog --replicas=3",
+        "risk": "low",
+        "rationale": "If rollback is not immediately feasible, scaling out may reduce per-instance request rate and mitigate timeout frequency, though it won't fix the underlying inefficiency."
+      }
+    ],
+    "related_documents": [
+      "PM-2026-04-22"
+    ],
+    "alternatives": [
+      {
+        "root_cause_service": "postgresql",
+        "category": "datastore_degradation",
+        "why_less_likely": "PostgreSQL's own metrics are healthy: p95 latency stable at 4ms, CPU at 12%, no error rate increase. Postmortem PM-2026-06-17 shows that when PostgreSQL degrades, its own latency metrics spike. Here they do not, so the fault is in product-catalog's new code, not the database."
+      }
+    ],
+    "reasoner": "claude:claude-sonnet-4-5"
+  },
+  "evidence": [
+    {
+      "id": "changes:currency:deploy:2",
+      "source": "changes",
+      "service": "currency",
+      "title": "deployment/currency rolled out 2.0.2 \u2192 2.0.3 (4m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/currency",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 4.5
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:frontend:deploy:1",
+      "source": "changes",
+      "service": "frontend",
+      "title": "deployment/frontend rolled out 2.0.2 \u2192 2.0.3 (8m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/frontend",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 8.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "changes:product-catalog:deploy:0",
+      "source": "changes",
+      "service": "product-catalog",
+      "title": "deployment/product-catalog rolled out 2.0.2 \u2192 2.0.3 (17m before alert)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "deploy",
+        "resource": "deployment/product-catalog",
+        "from_version": "2.0.2",
+        "to_version": "2.0.3",
+        "minutes_before_alert": 17.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:frontend:hpa",
+      "source": "k8s_events",
+      "service": "frontend",
+      "title": "SuccessfulRescale on hpa/frontend",
+      "detail": "New size: 2; reason: cpu resource utilization above target",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "SuccessfulRescale",
+        "object": "hpa/frontend",
+        "count": 1,
+        "message": "New size: 2",
+        "first_seen_min": -41
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:product-catalog:Pulled:1",
+      "source": "k8s_events",
+      "service": "product-catalog",
+      "title": "Pulled \u00d71 on pod/product-catalog-b953f31d-d4de2",
+      "detail": "Successfully pulled image \"ghcr.io/open-telemetry/demo:2.0.3-product-catalog\"",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "Pulled",
+        "object": "pod/product-catalog-b953f31d-d4de2",
+        "count": 1,
+        "message": "Successfully pulled image \"ghcr.io/open-telemetry/demo:2.0.3-product-catalog\"",
+        "first_seen_min": -17.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "k8s:product-catalog:ScalingReplicaSet:0",
+      "source": "k8s_events",
+      "service": "product-catalog",
+      "title": "ScalingReplicaSet \u00d71 on pod/product-catalog-b953f31d-d4de2",
+      "detail": "Scaled up replica set product-catalog-2.0.3 to 1",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "k8s_event",
+        "reason": "ScalingReplicaSet",
+        "object": "pod/product-catalog-b953f31d-d4de2",
+        "count": 1,
+        "message": "Scaled up replica set product-catalog-2.0.3 to 1",
+        "first_seen_min": -17.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:1",
+      "source": "logs",
+      "service": "frontend",
+      "title": "1,350\u00d7 WARN request to checkout took 1270ms",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "request to checkout took 1270ms",
+        "level": "WARN",
+        "count": 1350,
+        "sample": "request to checkout took 1270ms",
+        "first_seen_min": -10
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:2",
+      "source": "logs",
+      "service": "frontend",
+      "title": "1,350\u00d7 WARN request to product-catalog took 968ms",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "request to product-catalog took 968ms",
+        "level": "WARN",
+        "count": 1350,
+        "sample": "request to product-catalog took 968ms",
+        "first_seen_min": -10
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:3",
+      "source": "logs",
+      "service": "frontend",
+      "title": "1,350\u00d7 WARN request to recommendation took 1005ms",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "request to recommendation took 1005ms",
+        "level": "WARN",
+        "count": 1350,
+        "sample": "request to recommendation took 1005ms",
+        "first_seen_min": -10
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:4",
+      "source": "logs",
+      "service": "frontend",
+      "title": "14\u00d7 WARN slow render for /product/{id} (>500ms)",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "slow render for /product/{id} (>500ms)",
+        "level": "WARN",
+        "count": 14,
+        "sample": "slow render for /product/{id} (>500ms)",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:frontend:5",
+      "source": "logs",
+      "service": "frontend",
+      "title": "40\u00d7 WARN next.js build cache miss",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "next.js build cache miss",
+        "level": "WARN",
+        "count": 40,
+        "sample": "next.js build cache miss",
+        "first_seen_min": -8.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:product-catalog:1",
+      "source": "logs",
+      "service": "product-catalog",
+      "title": "530\u00d7 ERROR context deadline exceeded while listing products",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "context deadline exceeded while listing products",
+        "level": "ERROR",
+        "count": 530,
+        "sample": "context deadline exceeded while listing products (trace_id=\u2026)",
+        "first_seen_min": -17.0
+      },
+      "timestamp": null
+    },
+    {
+      "id": "logs:product-catalog:2",
+      "source": "logs",
+      "service": "product-catalog",
+      "title": "6\u00d7 WARN product {id} not found",
+      "detail": "",
+      "severity": "warning",
+      "link": null,
+      "data": {
+        "kind": "log_pattern",
+        "pattern": "product {id} not found",
+        "level": "WARN",
+        "count": 6,
+        "sample": "product {id} not found",
+        "first_seen_min": -44
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:cpu_utilization",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend cpu utilization: 35.9% \u2192 34.8% (peak 39.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3513
+          ],
+          [
+            -44,
+            0.3209
+          ],
+          [
+            -43,
+            0.3565
+          ],
+          [
+            -42,
+            0.3642
+          ],
+          [
+            -41,
+            0.359
+          ],
+          [
+            -40,
+            0.3657
+          ],
+          [
+            -39,
+            0.331
+          ],
+          [
+            -38,
+            0.3646
+          ],
+          [
+            -37,
+            0.3652
+          ],
+          [
+            -36,
+            0.3586
+          ],
+          [
+            -35,
+            0.3557
+          ],
+          [
+            -34,
+            0.3272
+          ],
+          [
+            -33,
+            0.3509
+          ],
+          [
+            -32,
+            0.3451
+          ],
+          [
+            -31,
+            0.3447
+          ],
+          [
+            -30,
+            0.3713
+          ],
+          [
+            -29,
+            0.3412
+          ],
+          [
+            -28,
+            0.3453
+          ],
+          [
+            -27,
+            0.3339
+          ],
+          [
+            -26,
+            0.3199
+          ],
+          [
+            -25,
+            0.3723
+          ],
+          [
+            -24,
+            0.3469
+          ],
+          [
+            -23,
+            0.3336
+          ],
+          [
+            -22,
+            0.3093
+          ],
+          [
+            -21,
+            0.3238
+          ],
+          [
+            -20,
+            0.3381
+          ],
+          [
+            -19,
+            0.3796
+          ],
+          [
+            -18,
+            0.3599
+          ],
+          [
+            -17,
+            0.3387
+          ],
+          [
+            -16,
+            0.3695
+          ],
+          [
+            -15,
+            0.3673
+          ],
+          [
+            -14,
+            0.3382
+          ],
+          [
+            -13,
+            0.339
+          ],
+          [
+            -12,
+            0.3308
+          ],
+          [
+            -11,
+            0.3991
+          ],
+          [
+            -10,
+            0.3385
+          ],
+          [
+            -9,
+            0.3599
+          ],
+          [
+            -8,
+            0.3111
+          ],
+          [
+            -7,
+            0.3488
+          ],
+          [
+            -6,
+            0.3519
+          ],
+          [
+            -5,
+            0.3708
+          ],
+          [
+            -4,
+            0.3454
+          ],
+          [
+            -3,
+            0.3277
+          ],
+          [
+            -2,
+            0.3604
+          ],
+          [
+            -1,
+            0.3355
+          ],
+          [
+            0,
+            0.3488
+          ]
+        ],
+        "baseline": 0.3586,
+        "current": 0.3481,
+        "peak": 0.3991
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:error_rate",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend error rate: 0.4% \u2192 1.5%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0043
+          ],
+          [
+            -44,
+            0.0043
+          ],
+          [
+            -43,
+            0.0038
+          ],
+          [
+            -42,
+            0.0045
+          ],
+          [
+            -41,
+            0.0055
+          ],
+          [
+            -40,
+            0.0034
+          ],
+          [
+            -39,
+            0.0037
+          ],
+          [
+            -38,
+            0.0039
+          ],
+          [
+            -37,
+            0.0032
+          ],
+          [
+            -36,
+            0.0047
+          ],
+          [
+            -35,
+            0.0043
+          ],
+          [
+            -34,
+            0.0042
+          ],
+          [
+            -33,
+            0.0046
+          ],
+          [
+            -32,
+            0.0038
+          ],
+          [
+            -31,
+            0.0043
+          ],
+          [
+            -30,
+            0.0029
+          ],
+          [
+            -29,
+            0.0032
+          ],
+          [
+            -28,
+            0.0033
+          ],
+          [
+            -27,
+            0.0041
+          ],
+          [
+            -26,
+            0.0031
+          ],
+          [
+            -25,
+            0.0044
+          ],
+          [
+            -24,
+            0.0042
+          ],
+          [
+            -23,
+            0.0034
+          ],
+          [
+            -22,
+            0.0035
+          ],
+          [
+            -21,
+            0.0051
+          ],
+          [
+            -20,
+            0.0044
+          ],
+          [
+            -19,
+            0.0038
+          ],
+          [
+            -18,
+            0.0032
+          ],
+          [
+            -17,
+            0.0036
+          ],
+          [
+            -16,
+            0.0121
+          ],
+          [
+            -15,
+            0.0193
+          ],
+          [
+            -14,
+            0.018
+          ],
+          [
+            -13,
+            0.0142
+          ],
+          [
+            -12,
+            0.0131
+          ],
+          [
+            -11,
+            0.0128
+          ],
+          [
+            -10,
+            0.0138
+          ],
+          [
+            -9,
+            0.0117
+          ],
+          [
+            -8,
+            0.0099
+          ],
+          [
+            -7,
+            0.0184
+          ],
+          [
+            -6,
+            0.0153
+          ],
+          [
+            -5,
+            0.0089
+          ],
+          [
+            -4,
+            0.0179
+          ],
+          [
+            -3,
+            0.0159
+          ],
+          [
+            -2,
+            0.0173
+          ],
+          [
+            -1,
+            0.0146
+          ],
+          [
+            0,
+            0.0156
+          ]
+        ],
+        "baseline": 0.0043,
+        "current": 0.015,
+        "peak": 0.0193
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:memory_utilization",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend memory utilization: 51.2% \u2192 51.7% (peak 54.1%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.5286
+          ],
+          [
+            -44,
+            0.5061
+          ],
+          [
+            -43,
+            0.5081
+          ],
+          [
+            -42,
+            0.5043
+          ],
+          [
+            -41,
+            0.5142
+          ],
+          [
+            -40,
+            0.5118
+          ],
+          [
+            -39,
+            0.512
+          ],
+          [
+            -38,
+            0.5139
+          ],
+          [
+            -37,
+            0.5232
+          ],
+          [
+            -36,
+            0.5048
+          ],
+          [
+            -35,
+            0.5295
+          ],
+          [
+            -34,
+            0.5356
+          ],
+          [
+            -33,
+            0.5131
+          ],
+          [
+            -32,
+            0.5171
+          ],
+          [
+            -31,
+            0.5145
+          ],
+          [
+            -30,
+            0.5118
+          ],
+          [
+            -29,
+            0.5335
+          ],
+          [
+            -28,
+            0.5183
+          ],
+          [
+            -27,
+            0.5036
+          ],
+          [
+            -26,
+            0.5154
+          ],
+          [
+            -25,
+            0.5348
+          ],
+          [
+            -24,
+            0.5069
+          ],
+          [
+            -23,
+            0.5193
+          ],
+          [
+            -22,
+            0.5104
+          ],
+          [
+            -21,
+            0.5264
+          ],
+          [
+            -20,
+            0.5133
+          ],
+          [
+            -19,
+            0.5229
+          ],
+          [
+            -18,
+            0.5274
+          ],
+          [
+            -17,
+            0.5159
+          ],
+          [
+            -16,
+            0.5282
+          ],
+          [
+            -15,
+            0.5177
+          ],
+          [
+            -14,
+            0.5098
+          ],
+          [
+            -13,
+            0.5165
+          ],
+          [
+            -12,
+            0.5348
+          ],
+          [
+            -11,
+            0.5178
+          ],
+          [
+            -10,
+            0.5062
+          ],
+          [
+            -9,
+            0.5153
+          ],
+          [
+            -8,
+            0.5199
+          ],
+          [
+            -7,
+            0.5144
+          ],
+          [
+            -6,
+            0.5371
+          ],
+          [
+            -5,
+            0.5085
+          ],
+          [
+            -4,
+            0.5235
+          ],
+          [
+            -3,
+            0.5124
+          ],
+          [
+            -2,
+            0.5172
+          ],
+          [
+            -1,
+            0.5025
+          ],
+          [
+            0,
+            0.541
+          ]
+        ],
+        "baseline": 0.512,
+        "current": 0.5175,
+        "peak": 0.541
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:p95_latency_ms",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend p95 latency ms: 187ms \u2192 1682ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            162.6159
+          ],
+          [
+            -44,
+            188.2868
+          ],
+          [
+            -43,
+            173.1506
+          ],
+          [
+            -42,
+            187.3161
+          ],
+          [
+            -41,
+            197.4929
+          ],
+          [
+            -40,
+            174.2568
+          ],
+          [
+            -39,
+            175.9281
+          ],
+          [
+            -38,
+            196.2903
+          ],
+          [
+            -37,
+            201.4839
+          ],
+          [
+            -36,
+            178.5622
+          ],
+          [
+            -35,
+            188.426
+          ],
+          [
+            -34,
+            181.5775
+          ],
+          [
+            -33,
+            184.5258
+          ],
+          [
+            -32,
+            182.9907
+          ],
+          [
+            -31,
+            171.5943
+          ],
+          [
+            -30,
+            165.7184
+          ],
+          [
+            -29,
+            183.3175
+          ],
+          [
+            -28,
+            171.9127
+          ],
+          [
+            -27,
+            179.037
+          ],
+          [
+            -26,
+            158.6276
+          ],
+          [
+            -25,
+            172.7751
+          ],
+          [
+            -24,
+            173.2294
+          ],
+          [
+            -23,
+            183.1315
+          ],
+          [
+            -22,
+            159.1311
+          ],
+          [
+            -21,
+            189.1062
+          ],
+          [
+            -20,
+            168.5769
+          ],
+          [
+            -19,
+            193.5267
+          ],
+          [
+            -18,
+            164.945
+          ],
+          [
+            -17,
+            181.9926
+          ],
+          [
+            -16,
+            1018.34
+          ],
+          [
+            -15,
+            1648.66
+          ],
+          [
+            -14,
+            1689.559
+          ],
+          [
+            -13,
+            1392.3089
+          ],
+          [
+            -12,
+            1480.3708
+          ],
+          [
+            -11,
+            1667.5502
+          ],
+          [
+            -10,
+            1656.323
+          ],
+          [
+            -9,
+            1503.634
+          ],
+          [
+            -8,
+            1411.7261
+          ],
+          [
+            -7,
+            1592.8717
+          ],
+          [
+            -6,
+            1536.8195
+          ],
+          [
+            -5,
+            1688.899
+          ],
+          [
+            -4,
+            1910.1579
+          ],
+          [
+            -3,
+            1468.8657
+          ],
+          [
+            -2,
+            1647.6706
+          ],
+          [
+            -1,
+            1535.7008
+          ],
+          [
+            0,
+            1838.0149
+          ]
+        ],
+        "baseline": 187.3161,
+        "current": 1681.5515,
+        "peak": 1910.1579
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:frontend:request_rate",
+      "source": "metrics",
+      "service": "frontend",
+      "title": "frontend request rate: 46.5 req/s \u2192 44.9 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            47.3666
+          ],
+          [
+            -44,
+            44.2938
+          ],
+          [
+            -43,
+            44.7924
+          ],
+          [
+            -42,
+            50.2075
+          ],
+          [
+            -41,
+            45.3554
+          ],
+          [
+            -40,
+            46.5666
+          ],
+          [
+            -39,
+            42.3207
+          ],
+          [
+            -38,
+            50.0726
+          ],
+          [
+            -37,
+            43.833
+          ],
+          [
+            -36,
+            46.4533
+          ],
+          [
+            -35,
+            48.1776
+          ],
+          [
+            -34,
+            48.1516
+          ],
+          [
+            -33,
+            47.2275
+          ],
+          [
+            -32,
+            48.4162
+          ],
+          [
+            -31,
+            44.7061
+          ],
+          [
+            -30,
+            45.4164
+          ],
+          [
+            -29,
+            46.3209
+          ],
+          [
+            -28,
+            44.5058
+          ],
+          [
+            -27,
+            46.173
+          ],
+          [
+            -26,
+            46.2702
+          ],
+          [
+            -25,
+            46.3029
+          ],
+          [
+            -24,
+            41.6907
+          ],
+          [
+            -23,
+            40.5824
+          ],
+          [
+            -22,
+            41.8819
+          ],
+          [
+            -21,
+            45.2967
+          ],
+          [
+            -20,
+            39.849
+          ],
+          [
+            -19,
+            45.0278
+          ],
+          [
+            -18,
+            43.3343
+          ],
+          [
+            -17,
+            46.8102
+          ],
+          [
+            -16,
+            47.4008
+          ],
+          [
+            -15,
+            47.5145
+          ],
+          [
+            -14,
+            45.6475
+          ],
+          [
+            -13,
+            42.4638
+          ],
+          [
+            -12,
+            43.321
+          ],
+          [
+            -11,
+            42.0388
+          ],
+          [
+            -10,
+            45.4269
+          ],
+          [
+            -9,
+            43.4748
+          ],
+          [
+            -8,
+            44.0464
+          ],
+          [
+            -7,
+            41.879
+          ],
+          [
+            -6,
+            50.3139
+          ],
+          [
+            -5,
+            41.2642
+          ],
+          [
+            -4,
+            45.5746
+          ],
+          [
+            -3,
+            42.7609
+          ],
+          [
+            -2,
+            43.5603
+          ],
+          [
+            -1,
+            48.6254
+          ],
+          [
+            0,
+            47.8254
+          ]
+        ],
+        "baseline": 46.4533,
+        "current": 44.9351,
+        "peak": 50.3139
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:cpu_utilization",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql cpu utilization: 11.8% \u2192 12.0% (peak 12.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.1126
+          ],
+          [
+            -44,
+            0.113
+          ],
+          [
+            -43,
+            0.1183
+          ],
+          [
+            -42,
+            0.1204
+          ],
+          [
+            -41,
+            0.1152
+          ],
+          [
+            -40,
+            0.125
+          ],
+          [
+            -39,
+            0.1225
+          ],
+          [
+            -38,
+            0.1253
+          ],
+          [
+            -37,
+            0.1114
+          ],
+          [
+            -36,
+            0.1246
+          ],
+          [
+            -35,
+            0.1184
+          ],
+          [
+            -34,
+            0.1278
+          ],
+          [
+            -33,
+            0.1189
+          ],
+          [
+            -32,
+            0.1196
+          ],
+          [
+            -31,
+            0.125
+          ],
+          [
+            -30,
+            0.1146
+          ],
+          [
+            -29,
+            0.1196
+          ],
+          [
+            -28,
+            0.1267
+          ],
+          [
+            -27,
+            0.1144
+          ],
+          [
+            -26,
+            0.1154
+          ],
+          [
+            -25,
+            0.1238
+          ],
+          [
+            -24,
+            0.121
+          ],
+          [
+            -23,
+            0.1229
+          ],
+          [
+            -22,
+            0.116
+          ],
+          [
+            -21,
+            0.1263
+          ],
+          [
+            -20,
+            0.1258
+          ],
+          [
+            -19,
+            0.1287
+          ],
+          [
+            -18,
+            0.1154
+          ],
+          [
+            -17,
+            0.1178
+          ],
+          [
+            -16,
+            0.1285
+          ],
+          [
+            -15,
+            0.1245
+          ],
+          [
+            -14,
+            0.1163
+          ],
+          [
+            -13,
+            0.1212
+          ],
+          [
+            -12,
+            0.12
+          ],
+          [
+            -11,
+            0.1152
+          ],
+          [
+            -10,
+            0.1245
+          ],
+          [
+            -9,
+            0.1153
+          ],
+          [
+            -8,
+            0.1154
+          ],
+          [
+            -7,
+            0.1246
+          ],
+          [
+            -6,
+            0.1128
+          ],
+          [
+            -5,
+            0.1243
+          ],
+          [
+            -4,
+            0.1225
+          ],
+          [
+            -3,
+            0.128
+          ],
+          [
+            -2,
+            0.1191
+          ],
+          [
+            -1,
+            0.1114
+          ],
+          [
+            0,
+            0.1173
+          ]
+        ],
+        "baseline": 0.1184,
+        "current": 0.1204,
+        "peak": 0.1287
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:error_rate",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql error rate: 0.4% \u2192 0.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0044
+          ],
+          [
+            -44,
+            0.0042
+          ],
+          [
+            -43,
+            0.0046
+          ],
+          [
+            -42,
+            0.0038
+          ],
+          [
+            -41,
+            0.0038
+          ],
+          [
+            -40,
+            0.0048
+          ],
+          [
+            -39,
+            0.0038
+          ],
+          [
+            -38,
+            0.0052
+          ],
+          [
+            -37,
+            0.0039
+          ],
+          [
+            -36,
+            0.0045
+          ],
+          [
+            -35,
+            0.004
+          ],
+          [
+            -34,
+            0.0035
+          ],
+          [
+            -33,
+            0.0042
+          ],
+          [
+            -32,
+            0.0034
+          ],
+          [
+            -31,
+            0.0038
+          ],
+          [
+            -30,
+            0.0046
+          ],
+          [
+            -29,
+            0.0032
+          ],
+          [
+            -28,
+            0.004
+          ],
+          [
+            -27,
+            0.0043
+          ],
+          [
+            -26,
+            0.0049
+          ],
+          [
+            -25,
+            0.0048
+          ],
+          [
+            -24,
+            0.004
+          ],
+          [
+            -23,
+            0.0042
+          ],
+          [
+            -22,
+            0.0037
+          ],
+          [
+            -21,
+            0.0034
+          ],
+          [
+            -20,
+            0.0037
+          ],
+          [
+            -19,
+            0.0028
+          ],
+          [
+            -18,
+            0.0048
+          ],
+          [
+            -17,
+            0.0039
+          ],
+          [
+            -16,
+            0.004
+          ],
+          [
+            -15,
+            0.0039
+          ],
+          [
+            -14,
+            0.0035
+          ],
+          [
+            -13,
+            0.0036
+          ],
+          [
+            -12,
+            0.0039
+          ],
+          [
+            -11,
+            0.0034
+          ],
+          [
+            -10,
+            0.0033
+          ],
+          [
+            -9,
+            0.0034
+          ],
+          [
+            -8,
+            0.0049
+          ],
+          [
+            -7,
+            0.0037
+          ],
+          [
+            -6,
+            0.0037
+          ],
+          [
+            -5,
+            0.0029
+          ],
+          [
+            -4,
+            0.0052
+          ],
+          [
+            -3,
+            0.0039
+          ],
+          [
+            -2,
+            0.0041
+          ],
+          [
+            -1,
+            0.0039
+          ],
+          [
+            0,
+            0.003
+          ]
+        ],
+        "baseline": 0.0042,
+        "current": 0.0038,
+        "peak": 0.0052
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:memory_utilization",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql memory utilization: 44.9% \u2192 45.0% (peak 46.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.4488
+          ],
+          [
+            -44,
+            0.4529
+          ],
+          [
+            -43,
+            0.4444
+          ],
+          [
+            -42,
+            0.4383
+          ],
+          [
+            -41,
+            0.4467
+          ],
+          [
+            -40,
+            0.452
+          ],
+          [
+            -39,
+            0.4494
+          ],
+          [
+            -38,
+            0.4381
+          ],
+          [
+            -37,
+            0.4552
+          ],
+          [
+            -36,
+            0.4515
+          ],
+          [
+            -35,
+            0.4463
+          ],
+          [
+            -34,
+            0.4659
+          ],
+          [
+            -33,
+            0.4511
+          ],
+          [
+            -32,
+            0.4577
+          ],
+          [
+            -31,
+            0.4611
+          ],
+          [
+            -30,
+            0.4405
+          ],
+          [
+            -29,
+            0.4483
+          ],
+          [
+            -28,
+            0.4545
+          ],
+          [
+            -27,
+            0.4694
+          ],
+          [
+            -26,
+            0.4534
+          ],
+          [
+            -25,
+            0.4382
+          ],
+          [
+            -24,
+            0.45
+          ],
+          [
+            -23,
+            0.4644
+          ],
+          [
+            -22,
+            0.4486
+          ],
+          [
+            -21,
+            0.4531
+          ],
+          [
+            -20,
+            0.4472
+          ],
+          [
+            -19,
+            0.4477
+          ],
+          [
+            -18,
+            0.4468
+          ],
+          [
+            -17,
+            0.4531
+          ],
+          [
+            -16,
+            0.4522
+          ],
+          [
+            -15,
+            0.447
+          ],
+          [
+            -14,
+            0.4457
+          ],
+          [
+            -13,
+            0.4565
+          ],
+          [
+            -12,
+            0.4311
+          ],
+          [
+            -11,
+            0.445
+          ],
+          [
+            -10,
+            0.4555
+          ],
+          [
+            -9,
+            0.4629
+          ],
+          [
+            -8,
+            0.4613
+          ],
+          [
+            -7,
+            0.4673
+          ],
+          [
+            -6,
+            0.4598
+          ],
+          [
+            -5,
+            0.4525
+          ],
+          [
+            -4,
+            0.4507
+          ],
+          [
+            -3,
+            0.4464
+          ],
+          [
+            -2,
+            0.4442
+          ],
+          [
+            -1,
+            0.4527
+          ],
+          [
+            0,
+            0.4561
+          ]
+        ],
+        "baseline": 0.4488,
+        "current": 0.4504,
+        "peak": 0.4694
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:p95_latency_ms",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql p95 latency ms: 4ms \u2192 4ms",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            4.0425
+          ],
+          [
+            -44,
+            4.3299
+          ],
+          [
+            -43,
+            3.6146
+          ],
+          [
+            -42,
+            4.1605
+          ],
+          [
+            -41,
+            3.7593
+          ],
+          [
+            -40,
+            4.1789
+          ],
+          [
+            -39,
+            4.0128
+          ],
+          [
+            -38,
+            4.1251
+          ],
+          [
+            -37,
+            3.8453
+          ],
+          [
+            -36,
+            4.2717
+          ],
+          [
+            -35,
+            4.1963
+          ],
+          [
+            -34,
+            4.238
+          ],
+          [
+            -33,
+            3.8438
+          ],
+          [
+            -32,
+            3.5689
+          ],
+          [
+            -31,
+            3.8077
+          ],
+          [
+            -30,
+            3.7364
+          ],
+          [
+            -29,
+            4.2571
+          ],
+          [
+            -28,
+            3.8025
+          ],
+          [
+            -27,
+            4.0069
+          ],
+          [
+            -26,
+            4.2319
+          ],
+          [
+            -25,
+            3.9441
+          ],
+          [
+            -24,
+            4.1325
+          ],
+          [
+            -23,
+            3.6631
+          ],
+          [
+            -22,
+            3.6145
+          ],
+          [
+            -21,
+            3.6711
+          ],
+          [
+            -20,
+            3.8185
+          ],
+          [
+            -19,
+            3.9736
+          ],
+          [
+            -18,
+            4.324
+          ],
+          [
+            -17,
+            3.6124
+          ],
+          [
+            -16,
+            3.839
+          ],
+          [
+            -15,
+            3.8173
+          ],
+          [
+            -14,
+            3.8032
+          ],
+          [
+            -13,
+            3.4951
+          ],
+          [
+            -12,
+            4.3978
+          ],
+          [
+            -11,
+            3.8623
+          ],
+          [
+            -10,
+            3.9582
+          ],
+          [
+            -9,
+            4.0451
+          ],
+          [
+            -8,
+            4.0454
+          ],
+          [
+            -7,
+            3.7781
+          ],
+          [
+            -6,
+            3.8083
+          ],
+          [
+            -5,
+            4.1161
+          ],
+          [
+            -4,
+            3.8256
+          ],
+          [
+            -3,
+            4.2369
+          ],
+          [
+            -2,
+            3.8078
+          ],
+          [
+            -1,
+            4.3812
+          ],
+          [
+            0,
+            3.8249
+          ]
+        ],
+        "baseline": 4.1251,
+        "current": 4.0321,
+        "peak": 4.3978
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:postgresql:request_rate",
+      "source": "metrics",
+      "service": "postgresql",
+      "title": "postgresql request rate: 39.7 req/s \u2192 39.6 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            40.2826
+          ],
+          [
+            -44,
+            37.7429
+          ],
+          [
+            -43,
+            40.9339
+          ],
+          [
+            -42,
+            37.5945
+          ],
+          [
+            -41,
+            37.7789
+          ],
+          [
+            -40,
+            35.5203
+          ],
+          [
+            -39,
+            39.7023
+          ],
+          [
+            -38,
+            40.0746
+          ],
+          [
+            -37,
+            41.5743
+          ],
+          [
+            -36,
+            38.0149
+          ],
+          [
+            -35,
+            41.7165
+          ],
+          [
+            -34,
+            37.646
+          ],
+          [
+            -33,
+            39.1618
+          ],
+          [
+            -32,
+            37.7502
+          ],
+          [
+            -31,
+            39.3058
+          ],
+          [
+            -30,
+            41.2976
+          ],
+          [
+            -29,
+            40.2453
+          ],
+          [
+            -28,
+            39.0385
+          ],
+          [
+            -27,
+            43.0374
+          ],
+          [
+            -26,
+            43.7851
+          ],
+          [
+            -25,
+            34.8646
+          ],
+          [
+            -24,
+            40.1302
+          ],
+          [
+            -23,
+            35.8785
+          ],
+          [
+            -22,
+            38.2966
+          ],
+          [
+            -21,
+            41.4522
+          ],
+          [
+            -20,
+            40.1005
+          ],
+          [
+            -19,
+            37.8471
+          ],
+          [
+            -18,
+            38.1055
+          ],
+          [
+            -17,
+            40.9856
+          ],
+          [
+            -16,
+            38.847
+          ],
+          [
+            -15,
+            42.4662
+          ],
+          [
+            -14,
+            38.7825
+          ],
+          [
+            -13,
+            39.0143
+          ],
+          [
+            -12,
+            39.7874
+          ],
+          [
+            -11,
+            41.7529
+          ],
+          [
+            -10,
+            36.6172
+          ],
+          [
+            -9,
+            37.3316
+          ],
+          [
+            -8,
+            37.6606
+          ],
+          [
+            -7,
+            41.317
+          ],
+          [
+            -6,
+            39.5728
+          ],
+          [
+            -5,
+            39.4762
+          ],
+          [
+            -4,
+            41.3603
+          ],
+          [
+            -3,
+            39.3671
+          ],
+          [
+            -2,
+            35.8482
+          ],
+          [
+            -1,
+            40.9787
+          ],
+          [
+            0,
+            40.6203
+          ]
+        ],
+        "baseline": 39.7023,
+        "current": 39.6085,
+        "peak": 43.7851
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:product-catalog:cpu_utilization",
+      "source": "metrics",
+      "service": "product-catalog",
+      "title": "product-catalog cpu utilization: 25.7% \u2192 25.8% (peak 27.4%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "cpu_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.2314
+          ],
+          [
+            -44,
+            0.2681
+          ],
+          [
+            -43,
+            0.2554
+          ],
+          [
+            -42,
+            0.2405
+          ],
+          [
+            -41,
+            0.2463
+          ],
+          [
+            -40,
+            0.2468
+          ],
+          [
+            -39,
+            0.2707
+          ],
+          [
+            -38,
+            0.257
+          ],
+          [
+            -37,
+            0.2611
+          ],
+          [
+            -36,
+            0.2603
+          ],
+          [
+            -35,
+            0.266
+          ],
+          [
+            -34,
+            0.2735
+          ],
+          [
+            -33,
+            0.2474
+          ],
+          [
+            -32,
+            0.2476
+          ],
+          [
+            -31,
+            0.2537
+          ],
+          [
+            -30,
+            0.2511
+          ],
+          [
+            -29,
+            0.2441
+          ],
+          [
+            -28,
+            0.2399
+          ],
+          [
+            -27,
+            0.2352
+          ],
+          [
+            -26,
+            0.2314
+          ],
+          [
+            -25,
+            0.2439
+          ],
+          [
+            -24,
+            0.2585
+          ],
+          [
+            -23,
+            0.2447
+          ],
+          [
+            -22,
+            0.2536
+          ],
+          [
+            -21,
+            0.2277
+          ],
+          [
+            -20,
+            0.2452
+          ],
+          [
+            -19,
+            0.2257
+          ],
+          [
+            -18,
+            0.2455
+          ],
+          [
+            -17,
+            0.2395
+          ],
+          [
+            -16,
+            0.2472
+          ],
+          [
+            -15,
+            0.2311
+          ],
+          [
+            -14,
+            0.2598
+          ],
+          [
+            -13,
+            0.2373
+          ],
+          [
+            -12,
+            0.2648
+          ],
+          [
+            -11,
+            0.2443
+          ],
+          [
+            -10,
+            0.2591
+          ],
+          [
+            -9,
+            0.2448
+          ],
+          [
+            -8,
+            0.2458
+          ],
+          [
+            -7,
+            0.23
+          ],
+          [
+            -6,
+            0.2633
+          ],
+          [
+            -5,
+            0.2672
+          ],
+          [
+            -4,
+            0.2317
+          ],
+          [
+            -3,
+            0.2563
+          ],
+          [
+            -2,
+            0.2689
+          ],
+          [
+            -1,
+            0.2628
+          ],
+          [
+            0,
+            0.2597
+          ]
+        ],
+        "baseline": 0.257,
+        "current": 0.2578,
+        "peak": 0.2735
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:product-catalog:error_rate",
+      "source": "metrics",
+      "service": "product-catalog",
+      "title": "product-catalog error rate: 0.4% \u2192 1.4%",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "error_rate",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.0024
+          ],
+          [
+            -44,
+            0.0043
+          ],
+          [
+            -43,
+            0.0042
+          ],
+          [
+            -42,
+            0.0041
+          ],
+          [
+            -41,
+            0.0028
+          ],
+          [
+            -40,
+            0.0026
+          ],
+          [
+            -39,
+            0.0031
+          ],
+          [
+            -38,
+            0.0035
+          ],
+          [
+            -37,
+            0.0037
+          ],
+          [
+            -36,
+            0.0029
+          ],
+          [
+            -35,
+            0.0041
+          ],
+          [
+            -34,
+            0.0045
+          ],
+          [
+            -33,
+            0.0033
+          ],
+          [
+            -32,
+            0.0038
+          ],
+          [
+            -31,
+            0.0048
+          ],
+          [
+            -30,
+            0.0026
+          ],
+          [
+            -29,
+            0.0048
+          ],
+          [
+            -28,
+            0.0029
+          ],
+          [
+            -27,
+            0.0039
+          ],
+          [
+            -26,
+            0.0038
+          ],
+          [
+            -25,
+            0.0036
+          ],
+          [
+            -24,
+            0.0036
+          ],
+          [
+            -23,
+            0.0052
+          ],
+          [
+            -22,
+            0.0042
+          ],
+          [
+            -21,
+            0.0044
+          ],
+          [
+            -20,
+            0.0042
+          ],
+          [
+            -19,
+            0.0042
+          ],
+          [
+            -18,
+            0.004
+          ],
+          [
+            -17,
+            0.0033
+          ],
+          [
+            -16,
+            0.0114
+          ],
+          [
+            -15,
+            0.0137
+          ],
+          [
+            -14,
+            0.0165
+          ],
+          [
+            -13,
+            0.0124
+          ],
+          [
+            -12,
+            0.0176
+          ],
+          [
+            -11,
+            0.0118
+          ],
+          [
+            -10,
+            0.0136
+          ],
+          [
+            -9,
+            0.0113
+          ],
+          [
+            -8,
+            0.0149
+          ],
+          [
+            -7,
+            0.0176
+          ],
+          [
+            -6,
+            0.015
+          ],
+          [
+            -5,
+            0.0118
+          ],
+          [
+            -4,
+            0.0135
+          ],
+          [
+            -3,
+            0.0155
+          ],
+          [
+            -2,
+            0.016
+          ],
+          [
+            -1,
+            0.0127
+          ],
+          [
+            0,
+            0.0152
+          ]
+        ],
+        "baseline": 0.0035,
+        "current": 0.0141,
+        "peak": 0.0176
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:product-catalog:memory_utilization",
+      "source": "metrics",
+      "service": "product-catalog",
+      "title": "product-catalog memory utilization: 35.9% \u2192 35.9% (peak 36.9%)",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "memory_utilization",
+        "unit": "ratio",
+        "series": [
+          [
+            -45,
+            0.3511
+          ],
+          [
+            -44,
+            0.363
+          ],
+          [
+            -43,
+            0.3682
+          ],
+          [
+            -42,
+            0.347
+          ],
+          [
+            -41,
+            0.3513
+          ],
+          [
+            -40,
+            0.3538
+          ],
+          [
+            -39,
+            0.3592
+          ],
+          [
+            -38,
+            0.3591
+          ],
+          [
+            -37,
+            0.36
+          ],
+          [
+            -36,
+            0.3608
+          ],
+          [
+            -35,
+            0.3505
+          ],
+          [
+            -34,
+            0.3507
+          ],
+          [
+            -33,
+            0.3476
+          ],
+          [
+            -32,
+            0.3681
+          ],
+          [
+            -31,
+            0.3614
+          ],
+          [
+            -30,
+            0.3582
+          ],
+          [
+            -29,
+            0.3587
+          ],
+          [
+            -28,
+            0.3669
+          ],
+          [
+            -27,
+            0.3638
+          ],
+          [
+            -26,
+            0.361
+          ],
+          [
+            -25,
+            0.3604
+          ],
+          [
+            -24,
+            0.3493
+          ],
+          [
+            -23,
+            0.3668
+          ],
+          [
+            -22,
+            0.3568
+          ],
+          [
+            -21,
+            0.3504
+          ],
+          [
+            -20,
+            0.3597
+          ],
+          [
+            -19,
+            0.3502
+          ],
+          [
+            -18,
+            0.364
+          ],
+          [
+            -17,
+            0.3529
+          ],
+          [
+            -16,
+            0.3637
+          ],
+          [
+            -15,
+            0.3597
+          ],
+          [
+            -14,
+            0.357
+          ],
+          [
+            -13,
+            0.359
+          ],
+          [
+            -12,
+            0.3625
+          ],
+          [
+            -11,
+            0.3681
+          ],
+          [
+            -10,
+            0.3636
+          ],
+          [
+            -9,
+            0.3606
+          ],
+          [
+            -8,
+            0.3669
+          ],
+          [
+            -7,
+            0.3558
+          ],
+          [
+            -6,
+            0.3688
+          ],
+          [
+            -5,
+            0.3545
+          ],
+          [
+            -4,
+            0.3602
+          ],
+          [
+            -3,
+            0.3611
+          ],
+          [
+            -2,
+            0.3618
+          ],
+          [
+            -1,
+            0.3672
+          ],
+          [
+            0,
+            0.3495
+          ]
+        ],
+        "baseline": 0.3591,
+        "current": 0.3591,
+        "peak": 0.3688
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:product-catalog:p95_latency_ms",
+      "source": "metrics",
+      "service": "product-catalog",
+      "title": "product-catalog p95 latency ms: 18ms \u2192 1021ms",
+      "detail": "",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "p95_latency_ms",
+        "unit": "ms",
+        "series": [
+          [
+            -45,
+            18.6435
+          ],
+          [
+            -44,
+            19.0049
+          ],
+          [
+            -43,
+            17.1991
+          ],
+          [
+            -42,
+            18.2462
+          ],
+          [
+            -41,
+            20.3324
+          ],
+          [
+            -40,
+            16.5151
+          ],
+          [
+            -39,
+            19.0602
+          ],
+          [
+            -38,
+            17.6633
+          ],
+          [
+            -37,
+            17.0206
+          ],
+          [
+            -36,
+            18.9721
+          ],
+          [
+            -35,
+            16.6183
+          ],
+          [
+            -34,
+            15.7189
+          ],
+          [
+            -33,
+            17.66
+          ],
+          [
+            -32,
+            17.7151
+          ],
+          [
+            -31,
+            18.6836
+          ],
+          [
+            -30,
+            21.0932
+          ],
+          [
+            -29,
+            15.6998
+          ],
+          [
+            -28,
+            20.0667
+          ],
+          [
+            -27,
+            16.5155
+          ],
+          [
+            -26,
+            15.7502
+          ],
+          [
+            -25,
+            17.9515
+          ],
+          [
+            -24,
+            19.079
+          ],
+          [
+            -23,
+            19.2046
+          ],
+          [
+            -22,
+            18.3223
+          ],
+          [
+            -21,
+            17.9385
+          ],
+          [
+            -20,
+            18.587
+          ],
+          [
+            -19,
+            18.1181
+          ],
+          [
+            -18,
+            16.1813
+          ],
+          [
+            -17,
+            17.9051
+          ],
+          [
+            -16,
+            474.5206
+          ],
+          [
+            -15,
+            885.7426
+          ],
+          [
+            -14,
+            991.6484
+          ],
+          [
+            -13,
+            898.3296
+          ],
+          [
+            -12,
+            883.4548
+          ],
+          [
+            -11,
+            957.8149
+          ],
+          [
+            -10,
+            1048.9244
+          ],
+          [
+            -9,
+            926.3098
+          ],
+          [
+            -8,
+            974.9185
+          ],
+          [
+            -7,
+            1024.5221
+          ],
+          [
+            -6,
+            915.2299
+          ],
+          [
+            -5,
+            1027.265
+          ],
+          [
+            -4,
+            995.7757
+          ],
+          [
+            -3,
+            1075.866
+          ],
+          [
+            -2,
+            940.4799
+          ],
+          [
+            -1,
+            1069.5435
+          ],
+          [
+            0,
+            1018.397
+          ]
+        ],
+        "baseline": 18.2462,
+        "current": 1021.2212,
+        "peak": 1075.866
+      },
+      "timestamp": null
+    },
+    {
+      "id": "metrics:product-catalog:request_rate",
+      "source": "metrics",
+      "service": "product-catalog",
+      "title": "product-catalog request rate: 53.5 req/s \u2192 51.1 req/s",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "metric_series",
+        "metric": "request_rate",
+        "unit": "req/s",
+        "series": [
+          [
+            -45,
+            52.1898
+          ],
+          [
+            -44,
+            53.9301
+          ],
+          [
+            -43,
+            56.1856
+          ],
+          [
+            -42,
+            48.4677
+          ],
+          [
+            -41,
+            53.2502
+          ],
+          [
+            -40,
+            51.6456
+          ],
+          [
+            -39,
+            53.5301
+          ],
+          [
+            -38,
+            56.8998
+          ],
+          [
+            -37,
+            48.3875
+          ],
+          [
+            -36,
+            54.9014
+          ],
+          [
+            -35,
+            54.4717
+          ],
+          [
+            -34,
+            53.3338
+          ],
+          [
+            -33,
+            52.714
+          ],
+          [
+            -32,
+            50.2605
+          ],
+          [
+            -31,
+            54.0446
+          ],
+          [
+            -30,
+            52.411
+          ],
+          [
+            -29,
+            50.087
+          ],
+          [
+            -28,
+            52.3415
+          ],
+          [
+            -27,
+            52.2106
+          ],
+          [
+            -26,
+            49.5607
+          ],
+          [
+            -25,
+            45.7643
+          ],
+          [
+            -24,
+            54.1536
+          ],
+          [
+            -23,
+            56.1643
+          ],
+          [
+            -22,
+            56.1962
+          ],
+          [
+            -21,
+            52.9156
+          ],
+          [
+            -20,
+            51.9717
+          ],
+          [
+            -19,
+            53.4217
+          ],
+          [
+            -18,
+            51.8573
+          ],
+          [
+            -17,
+            50.9771
+          ],
+          [
+            -16,
+            51.0032
+          ],
+          [
+            -15,
+            53.3847
+          ],
+          [
+            -14,
+            50.8227
+          ],
+          [
+            -13,
+            48.5951
+          ],
+          [
+            -12,
+            50.0905
+          ],
+          [
+            -11,
+            55.2216
+          ],
+          [
+            -10,
+            52.8253
+          ],
+          [
+            -9,
+            53.66
+          ],
+          [
+            -8,
+            57.1642
+          ],
+          [
+            -7,
+            49.6204
+          ],
+          [
+            -6,
+            53.7381
+          ],
+          [
+            -5,
+            53.1385
+          ],
+          [
+            -4,
+            47.4669
+          ],
+          [
+            -3,
+            49.1426
+          ],
+          [
+            -2,
+            52.5109
+          ],
+          [
+            -1,
+            53.5166
+          ],
+          [
+            0,
+            50.9005
+          ]
+        ],
+        "baseline": 53.5301,
+        "current": 51.1127,
+        "peak": 57.1642
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend:dd327acd4e2b",
+      "source": "traces",
+      "service": "product-catalog",
+      "title": "Failing trace dd327acd4e2b: frontend \u2192 product-catalog",
+      "detail": "context deadline exceeded while listing products",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "dd327acd4e2b02e8e1c74ecc3e3175b9",
+        "spans": [
+          {
+            "service": "frontend",
+            "operation": "frontend/handle",
+            "duration_ms": 1654.7,
+            "error": true,
+            "message": "rpc error calling product-catalog: code = Internal",
+            "depth": 0,
+            "kind": "server"
+          },
+          {
+            "service": "product-catalog",
+            "operation": "product-catalog/handle",
+            "duration_ms": 866.2,
+            "error": true,
+            "message": "context deadline exceeded while listing products",
+            "depth": 1,
+            "kind": "server"
+          }
+        ],
+        "origin": "product-catalog"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:frontend:summary",
+      "source": "traces",
+      "service": "frontend",
+      "title": "3/200 sampled frontend traces failed in the last 5m; top error origin: product-catalog",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 3,
+        "error_origins": {
+          "product-catalog": 2,
+          "valkey-cart": 1
+        },
+        "latency_contributors_ms": {
+          "product-catalog": 1497.2
+        },
+        "p95_ms": 1677.2
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:product-catalog:039e3b064468",
+      "source": "traces",
+      "service": "product-catalog",
+      "title": "Failing trace 039e3b064468: product-catalog",
+      "detail": "context deadline exceeded while listing products",
+      "severity": "critical",
+      "link": null,
+      "data": {
+        "kind": "trace_sample",
+        "trace_id": "039e3b06446863f6fa5126fd29c99ec7",
+        "spans": [
+          {
+            "service": "product-catalog",
+            "operation": "product-catalog/handle",
+            "duration_ms": 866.5,
+            "error": true,
+            "message": "context deadline exceeded while listing products",
+            "depth": 0,
+            "kind": "server"
+          }
+        ],
+        "origin": "product-catalog"
+      },
+      "timestamp": null
+    },
+    {
+      "id": "traces:product-catalog:summary",
+      "source": "traces",
+      "service": "product-catalog",
+      "title": "3/200 sampled product-catalog traces failed in the last 5m; top error origin: product-catalog",
+      "detail": "",
+      "severity": "info",
+      "link": null,
+      "data": {
+        "kind": "trace_summary",
+        "total": 200,
+        "errors": 3,
+        "error_origins": {
+          "product-catalog": 2,
+          "postgresql": 1
+        },
+        "latency_contributors_ms": {
+          "product-catalog": 950.0
+        },
+        "p95_ms": 968.0
+      },
+      "timestamp": null
+    }
+  ],
+  "findings": [
+    {
+      "kind": "trace_latency_origin",
+      "service": "product-catalog",
+      "score": 3.0,
+      "summary": "product-catalog accounts for 100% of added latency in frontend traces (+1497ms)",
+      "evidence_ids": [
+        "traces:frontend:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 1497.2
+      }
+    },
+    {
+      "kind": "trace_latency_origin",
+      "service": "product-catalog",
+      "score": 3.0,
+      "summary": "product-catalog accounts for 100% of added latency in product-catalog traces (+950ms)",
+      "evidence_ids": [
+        "traces:product-catalog:summary"
+      ],
+      "data": {
+        "share": 1.0,
+        "added_ms": 950.0
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "currency",
+      "score": 1.5,
+      "summary": "currency rolled out 2.0.2 \u2192 2.0.3 4m before the alert",
+      "evidence_ids": [
+        "changes:currency:deploy:2"
+      ],
+      "data": {
+        "minutes_before_alert": 4.5,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "frontend",
+      "score": 1.5,
+      "summary": "frontend rolled out 2.0.2 \u2192 2.0.3 8m before the alert",
+      "evidence_ids": [
+        "changes:frontend:deploy:1"
+      ],
+      "data": {
+        "minutes_before_alert": 8.0,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "recent_deploy",
+      "service": "product-catalog",
+      "score": 1.5,
+      "summary": "product-catalog rolled out 2.0.2 \u2192 2.0.3 17m before the alert",
+      "evidence_ids": [
+        "changes:product-catalog:deploy:0"
+      ],
+      "data": {
+        "minutes_before_alert": 17.0,
+        "to_version": "2.0.3"
+      }
+    },
+    {
+      "kind": "error_logs",
+      "service": "product-catalog",
+      "score": 1.0,
+      "summary": "530\u00d7 ERROR in product-catalog: context deadline exceeded while listing products",
+      "evidence_ids": [
+        "logs:product-catalog:1"
+      ],
+      "data": {
+        "count": 530,
+        "message": "context deadline exceeded while listing products"
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "frontend",
+      "score": 0.8,
+      "summary": "frontend p95 187ms \u2192 1682ms",
+      "evidence_ids": [
+        "metrics:frontend:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 187.3161,
+        "current": 1681.5515
+      }
+    },
+    {
+      "kind": "latency_spike",
+      "service": "product-catalog",
+      "score": 0.8,
+      "summary": "product-catalog p95 18ms \u2192 1021ms",
+      "evidence_ids": [
+        "metrics:product-catalog:p95_latency_ms"
+      ],
+      "data": {
+        "baseline": 18.2462,
+        "current": 1021.2212
+      }
+    }
+  ],
+  "retrieved_documents": [
+    {
+      "id": "PM-2026-06-17",
+      "title": "Accounting consumer lag from a long-running Postgres migration",
+      "type": "postmortem",
+      "services": [
+        "postgresql",
+        "accounting",
+        "product-catalog",
+        "kafka"
+      ],
+      "category": "datastore_degradation",
+      "date": "2026-06-17",
+      "snippet": "## Summary A manual `ALTER TABLE` on `orders` held a lock for 40 minutes. Accounting's inserts slowed from 30ms to ~1s, and its Kafka consumer lag grew past 5,000 messages. Product-catalog reads were also slower. The alert fired on consumer lag. ## Root cause Datastore degradation in postgresql (lock contention). Accounting was healthy but blocked on the database. ## Resolution Cancelled the migra\u2026",
+      "score": 32.207
+    },
+    {
+      "id": "RB-postgres",
+      "title": "Postgres slow queries and lock contention",
+      "type": "runbook",
+      "services": [
+        "postgresql",
+        "accounting",
+        "product-catalog"
+      ],
+      "category": "datastore_degradation",
+      "date": null,
+      "snippet": "1. `kubectl -n otel-demo exec deploy/postgresql -- psql -U root -d otel -c \"SELECT pid, now()-query_start AS age, state, query FROM pg_stat_activity WHERE state<>'idle' ORDER BY age DESC LIMIT 5\"` 2. Blocking locks: `SELECT * FROM pg_locks WHERE NOT granted`. 3. Cancel the offender: `SELECT pg_cancel_backend(<pid>)`. 4. Consumers lagging behind a slow DB recover by themselves once latency drops; d\u2026",
+      "score": 25.395
+    },
+    {
+      "id": "PM-2026-04-22",
+      "title": "Ad service CPU saturation slowed every product page",
+      "type": "postmortem",
+      "services": [
+        "ad",
+        "frontend"
+      ],
+      "category": "cpu_saturation",
+      "date": "2026-04-22",
+      "snippet": "## Summary A regex in ad targeting went quadratic on long keyword lists. Ad CPU sat at 97% of its limit with heavy throttling, p95 rose to 1.5s and frontend page latency breached its SLO. A small share of ad calls hit DEADLINE_EXCEEDED. ## Resolution Scaled ad to 4 replicas, then fixed the regex. ## Lessons - CPU at limit + `CPUThrottlingHigh` + latency on one service with no errors elsewhere = sa\u2026",
+      "score": 19.465
+    },
+    {
+      "id": "PM-2026-05-04",
+      "title": "Recommendation OOM loop from an unbounded product cache",
+      "type": "postmortem",
+      "services": [
+        "recommendation",
+        "frontend"
+      ],
+      "category": "memory_leak",
+      "date": "2026-05-04",
+      "snippet": "## Summary Recommendation was OOMKilled every ~7 minutes for two hours. Each restart dropped in-flight requests, so frontend saw periodic bursts of 5xx. Memory grew linearly from ~45% to 100% of the limit between restarts (sawtooth). ## Root cause An in-process cache keyed by product-id list had no eviction. The `recommendationCacheFailure` flag reproduces this. ## Resolution Restarted the deploym\u2026",
+      "score": 18.85
+    },
+    {
+      "id": "PM-2026-03-12",
+      "title": "Cart checkout failures from Redis connection-pool exhaustion",
+      "type": "postmortem",
+      "services": [
+        "cart",
+        "valkey-cart",
+        "frontend"
+      ],
+      "category": "resource_exhaustion",
+      "date": "2026-03-12",
+      "snippet": "## Summary For 47 minutes, 18% of add-to-cart and checkout requests failed with `RedisTimeoutException ... pool busy=8/8`. The cart service's Redis client pool had been reduced to 8 connections in a refactor (PR #2231). Valkey itself was healthy (CPU 9%, p99 2ms). Frontend alerted on 5xx ratio. ## Detection FrontendHighErrorRate fired first. The on-call initially suspected Valkey because of a pod \u2026",
+      "score": 14.818
+    }
+  ],
+  "services_examined": [
+    "frontend",
+    "product-catalog",
+    "postgresql"
+  ],
+  "error": null,
+  "notes": [],
+  "grading": {
+    "service_correct": true,
+    "category_correct": true,
+    "correct": true,
+    "service_in_top3": true,
+    "score": 1.0,
+    "expected_service": "product-catalog",
+    "expected_category": "bad_deploy",
+    "predicted_service": "product-catalog",
+    "predicted_category": "bad_deploy",
+    "confidence": 0.85
+  },
+  "slack_posted": false
+}

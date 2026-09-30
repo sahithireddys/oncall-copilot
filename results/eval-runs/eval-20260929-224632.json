@@ -1,0 +1,1482 @@
+[
+  {
+    "id": "221ecbeab4",
+    "created_at": "2026-09-30T02:43:01.513045+00:00",
+    "status": "completed",
+    "reasoner": "heuristic",
+    "requested_reasoner": "heuristic",
+    "model": null,
+    "scenario_ids": [
+      "payment-bad-deploy",
+      "payment-failure-flag",
+      "checkout-payment-unreachable",
+      "payment-scaled-to-zero",
+      "cart-pool-exhaustion",
+      "valkey-slow",
+      "recommendation-memory-leak",
+      "email-memory-leak",
+      "ad-high-cpu",
+      "ad-failure-flag-with-deploy-noise",
+      "product-catalog-flag",
+      "product-catalog-slow-release",
+      "postgres-slow-accounting-lag",
+      "kafka-queue-problems",
+      "fraud-detection-crashloop",
+      "currency-crashloop-release",
+      "quote-network-latency",
+      "cart-readiness-probe",
+      "checkout-memory-leak-payment-noise",
+      "image-provider-slow",
+      "shipping-bad-quote-addr",
+      "payment-cpu-limit",
+      "product-catalog-oom",
+      "currency-latency-regression",
+      "fraud-detection-slow-leak",
+      "frontend-bad-deploy"
+    ],
+    "results": [
+      {
+        "scenario_id": "payment-bad-deploy",
+        "title": "Payment release throws on every other charge",
+        "difficulty": "easy",
+        "investigation_id": "86d535103f58",
+        "status": "completed",
+        "duration_ms": 43,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "payment",
+          "expected_category": "bad_deploy",
+          "predicted_service": "payment",
+          "predicted_category": "bad_deploy",
+          "confidence": 0.89
+        },
+        "predicted": "payment/bad_deploy",
+        "expected": "payment/bad_deploy",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "payment-failure-flag",
+        "title": "Feature flag makes payment fail 25% of charges",
+        "difficulty": "easy",
+        "investigation_id": "5c65cb7c0adf",
+        "status": "completed",
+        "duration_ms": 46,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "payment",
+          "expected_category": "config_change",
+          "predicted_service": "payment",
+          "predicted_category": "config_change",
+          "confidence": 0.89
+        },
+        "predicted": "payment/config_change",
+        "expected": "payment/config_change",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "checkout-payment-unreachable",
+        "title": "Checkout points at a payment address that doesn't exist",
+        "difficulty": "medium",
+        "investigation_id": "64f3d068a9c1",
+        "status": "completed",
+        "duration_ms": 54,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "checkout",
+          "expected_category": "config_change",
+          "predicted_service": "checkout",
+          "predicted_category": "config_change",
+          "confidence": 0.92
+        },
+        "predicted": "checkout/config_change",
+        "expected": "checkout/config_change",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "payment-scaled-to-zero",
+        "title": "Payment deployment scaled to zero replicas",
+        "difficulty": "medium",
+        "investigation_id": "9fac17ef1708",
+        "status": "completed",
+        "duration_ms": 53,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "payment",
+          "expected_category": "dependency_unavailable",
+          "predicted_service": "payment",
+          "predicted_category": "dependency_unavailable",
+          "confidence": 0.9
+        },
+        "predicted": "payment/dependency_unavailable",
+        "expected": "payment/dependency_unavailable",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "cart-pool-exhaustion",
+        "title": "Cart exhausts its Valkey connection pool",
+        "difficulty": "medium",
+        "investigation_id": "2a4dc4b576c0",
+        "status": "completed",
+        "duration_ms": 45,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "cart",
+          "expected_category": "resource_exhaustion",
+          "predicted_service": "cart",
+          "predicted_category": "resource_exhaustion",
+          "confidence": 0.92
+        },
+        "predicted": "cart/resource_exhaustion",
+        "expected": "cart/resource_exhaustion",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "valkey-slow",
+        "title": "Valkey (cart cache) responding slowly",
+        "difficulty": "medium",
+        "investigation_id": "a718b7d99718",
+        "status": "completed",
+        "duration_ms": 44,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "valkey-cart",
+          "expected_category": "datastore_degradation",
+          "predicted_service": "valkey-cart",
+          "predicted_category": "datastore_degradation",
+          "confidence": 0.92
+        },
+        "predicted": "valkey-cart/datastore_degradation",
+        "expected": "valkey-cart/datastore_degradation",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "recommendation-memory-leak",
+        "title": "Recommendation cache leaks memory and gets OOMKilled",
+        "difficulty": "easy",
+        "investigation_id": "0be81ee925ae",
+        "status": "completed",
+        "duration_ms": 53,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "recommendation",
+          "expected_category": "memory_leak",
+          "predicted_service": "recommendation",
+          "predicted_category": "memory_leak",
+          "confidence": 0.93
+        },
+        "predicted": "recommendation/memory_leak",
+        "expected": "recommendation/memory_leak",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "email-memory-leak",
+        "title": "Email service leaks memory, slowing checkout",
+        "difficulty": "medium",
+        "investigation_id": "152a853641ce",
+        "status": "completed",
+        "duration_ms": 31,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "email",
+          "expected_category": "memory_leak",
+          "predicted_service": "email",
+          "predicted_category": "memory_leak",
+          "confidence": 0.9
+        },
+        "predicted": "email/memory_leak",
+        "expected": "email/memory_leak",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "ad-high-cpu",
+        "title": "Ad service CPU pinned at its limit",
+        "difficulty": "easy",
+        "investigation_id": "4fbf148c9e31",
+        "status": "completed",
+        "duration_ms": 49,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "ad",
+          "expected_category": "cpu_saturation",
+          "predicted_service": "ad",
+          "predicted_category": "cpu_saturation",
+          "confidence": 0.91
+        },
+        "predicted": "ad/cpu_saturation",
+        "expected": "ad/cpu_saturation",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "ad-failure-flag-with-deploy-noise",
+        "title": "Ad failures right after an unrelated recommendation deploy",
+        "difficulty": "medium",
+        "investigation_id": "2b76e0d0c832",
+        "status": "completed",
+        "duration_ms": 46,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "ad",
+          "expected_category": "config_change",
+          "predicted_service": "ad",
+          "predicted_category": "config_change",
+          "confidence": 0.91
+        },
+        "predicted": "ad/config_change",
+        "expected": "ad/config_change",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "product-catalog-flag",
+        "title": "Product catalog fails for a single product",
+        "difficulty": "medium",
+        "investigation_id": "d27eaadcffb3",
+        "status": "completed",
+        "duration_ms": 48,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "product-catalog",
+          "expected_category": "config_change",
+          "predicted_service": "product-catalog",
+          "predicted_category": "config_change",
+          "confidence": 0.91
+        },
+        "predicted": "product-catalog/config_change",
+        "expected": "product-catalog/config_change",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "product-catalog-slow-release",
+        "title": "Product catalog release adds an N+1 query (frontend deploy is a red herring)",
+        "difficulty": "hard",
+        "investigation_id": "e567948cfe69",
+        "status": "completed",
+        "duration_ms": 43,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "product-catalog",
+          "expected_category": "bad_deploy",
+          "predicted_service": "product-catalog",
+          "predicted_category": "bad_deploy",
+          "confidence": 0.84
+        },
+        "predicted": "product-catalog/bad_deploy",
+        "expected": "product-catalog/bad_deploy",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "postgres-slow-accounting-lag",
+        "title": "Slow Postgres makes the accounting consumer fall behind",
+        "difficulty": "hard",
+        "investigation_id": "c599c431ccc4",
+        "status": "completed",
+        "duration_ms": 40,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "postgresql",
+          "expected_category": "datastore_degradation",
+          "predicted_service": "postgresql",
+          "predicted_category": "datastore_degradation",
+          "confidence": 0.88
+        },
+        "predicted": "postgresql/datastore_degradation",
+        "expected": "postgresql/datastore_degradation",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "kafka-queue-problems",
+        "title": "Accounting consumer can't keep up with Kafka",
+        "difficulty": "medium",
+        "investigation_id": "2f7be532a919",
+        "status": "completed",
+        "duration_ms": 35,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "accounting",
+          "expected_category": "queue_backlog",
+          "predicted_service": "accounting",
+          "predicted_category": "queue_backlog",
+          "confidence": 0.92
+        },
+        "predicted": "accounting/queue_backlog",
+        "expected": "accounting/queue_backlog",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "fraud-detection-crashloop",
+        "title": "Fraud detection crash-loops after a Kafka address change",
+        "difficulty": "medium",
+        "investigation_id": "70bdfaed88a7",
+        "status": "completed",
+        "duration_ms": 24,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "fraud-detection",
+          "expected_category": "crash_loop",
+          "predicted_service": "fraud-detection",
+          "predicted_category": "crash_loop",
+          "confidence": 0.93
+        },
+        "predicted": "fraud-detection/crash_loop",
+        "expected": "fraud-detection/crash_loop",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "currency-crashloop-release",
+        "title": "Currency release crash-loops on start-up",
+        "difficulty": "medium",
+        "investigation_id": "f49391313c7e",
+        "status": "completed",
+        "duration_ms": 31,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "currency",
+          "expected_category": "crash_loop",
+          "predicted_service": "currency",
+          "predicted_category": "crash_loop",
+          "confidence": 0.89
+        },
+        "predicted": "currency/crash_loop",
+        "expected": "currency/crash_loop",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "quote-network-latency",
+        "title": "Network latency between shipping and quote",
+        "difficulty": "medium",
+        "investigation_id": "15b3bc010a77",
+        "status": "completed",
+        "duration_ms": 60,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "quote",
+          "expected_category": "network_latency",
+          "predicted_service": "quote",
+          "predicted_category": "network_latency",
+          "confidence": 0.84
+        },
+        "predicted": "quote/network_latency",
+        "expected": "quote/network_latency",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "cart-readiness-probe",
+        "title": "Cart readiness probe fails, half its endpoints are pulled",
+        "difficulty": "medium",
+        "investigation_id": "e6c713898313",
+        "status": "completed",
+        "duration_ms": 61,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "cart",
+          "expected_category": "probe_failure",
+          "predicted_service": "cart",
+          "predicted_category": "probe_failure",
+          "confidence": 0.89
+        },
+        "predicted": "cart/probe_failure",
+        "expected": "cart/probe_failure",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "checkout-memory-leak-payment-noise",
+        "title": "Checkout leaks memory; a payment deploy 6 minutes earlier is a red herring",
+        "difficulty": "hard",
+        "investigation_id": "5ed9f461ef4a",
+        "status": "completed",
+        "duration_ms": 65,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "checkout",
+          "expected_category": "memory_leak",
+          "predicted_service": "checkout",
+          "predicted_category": "memory_leak",
+          "confidence": 0.93
+        },
+        "predicted": "checkout/memory_leak",
+        "expected": "checkout/memory_leak",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "image-provider-slow",
+        "title": "Image provider injects a delay into every image",
+        "difficulty": "easy",
+        "investigation_id": "6f518a524274",
+        "status": "completed",
+        "duration_ms": 37,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "image-provider",
+          "expected_category": "network_latency",
+          "predicted_service": "image-provider",
+          "predicted_category": "network_latency",
+          "confidence": 0.73
+        },
+        "predicted": "image-provider/network_latency",
+        "expected": "image-provider/network_latency",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "shipping-bad-quote-addr",
+        "title": "Shipping config points at the wrong quote service",
+        "difficulty": "medium",
+        "investigation_id": "8e87ad5e81c0",
+        "status": "completed",
+        "duration_ms": 50,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "shipping",
+          "expected_category": "config_change",
+          "predicted_service": "shipping",
+          "predicted_category": "config_change",
+          "confidence": 0.86
+        },
+        "predicted": "shipping/config_change",
+        "expected": "shipping/config_change",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "payment-cpu-limit",
+        "title": "Payment CPU limit cut to 50m, requests queue up",
+        "difficulty": "medium",
+        "investigation_id": "7175caf46d64",
+        "status": "completed",
+        "duration_ms": 45,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "payment",
+          "expected_category": "cpu_saturation",
+          "predicted_service": "payment",
+          "predicted_category": "cpu_saturation",
+          "confidence": 0.9
+        },
+        "predicted": "payment/cpu_saturation",
+        "expected": "payment/cpu_saturation",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "product-catalog-oom",
+        "title": "Product catalog OOMKilled under a smaller memory limit",
+        "difficulty": "medium",
+        "investigation_id": "a2cf45432fd2",
+        "status": "completed",
+        "duration_ms": 48,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "product-catalog",
+          "expected_category": "memory_leak",
+          "predicted_service": "product-catalog",
+          "predicted_category": "memory_leak",
+          "confidence": 0.9
+        },
+        "predicted": "product-catalog/memory_leak",
+        "expected": "product-catalog/memory_leak",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "currency-latency-regression",
+        "title": "Currency release makes every conversion ~900ms slower (no errors)",
+        "difficulty": "hard",
+        "investigation_id": "136f4fc107d0",
+        "status": "completed",
+        "duration_ms": 48,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "currency",
+          "expected_category": "bad_deploy",
+          "predicted_service": "currency",
+          "predicted_category": "bad_deploy",
+          "confidence": 0.69
+        },
+        "predicted": "currency/bad_deploy",
+        "expected": "currency/bad_deploy",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "fraud-detection-slow-leak",
+        "title": "Fraud detection leaks memory slowly - GC thrash, no OOM yet",
+        "difficulty": "hard",
+        "investigation_id": "e48460b16b85",
+        "status": "completed",
+        "duration_ms": 22,
+        "grading": {
+          "service_correct": true,
+          "category_correct": false,
+          "correct": false,
+          "service_in_top3": true,
+          "score": 0.5,
+          "expected_service": "fraud-detection",
+          "expected_category": "memory_leak",
+          "predicted_service": "fraud-detection",
+          "predicted_category": "queue_backlog",
+          "confidence": 0.9
+        },
+        "predicted": "fraud-detection/queue_backlog",
+        "expected": "fraud-detection/memory_leak",
+        "reasoner_used": "heuristic",
+        "error": null
+      },
+      {
+        "scenario_id": "frontend-bad-deploy",
+        "title": "Frontend release breaks product pages for some currencies",
+        "difficulty": "medium",
+        "investigation_id": "893b1cde040e",
+        "status": "completed",
+        "duration_ms": 25,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "frontend",
+          "expected_category": "bad_deploy",
+          "predicted_service": "frontend",
+          "predicted_category": "bad_deploy",
+          "confidence": 0.91
+        },
+        "predicted": "frontend/bad_deploy",
+        "expected": "frontend/bad_deploy",
+        "reasoner_used": "heuristic",
+        "error": null
+      }
+    ],
+    "summary": {
+      "n": 26,
+      "completed": 26,
+      "accuracy": 0.962,
+      "service_accuracy": 1.0,
+      "category_accuracy": 0.962,
+      "service_recall_at_3": 1.0,
+      "mean_score": 0.981,
+      "median_time_to_hypothesis_ms": 45,
+      "p95_time_to_hypothesis_ms": 60,
+      "by_difficulty": {
+        "easy": {
+          "n": 5,
+          "accuracy": 1.0
+        },
+        "hard": {
+          "n": 5,
+          "accuracy": 0.8
+        },
+        "medium": {
+          "n": 16,
+          "accuracy": 1.0
+        }
+      },
+      "by_category": {
+        "bad_deploy": {
+          "n": 4,
+          "accuracy": 1.0
+        },
+        "config_change": {
+          "n": 5,
+          "accuracy": 1.0
+        },
+        "cpu_saturation": {
+          "n": 2,
+          "accuracy": 1.0
+        },
+        "crash_loop": {
+          "n": 2,
+          "accuracy": 1.0
+        },
+        "datastore_degradation": {
+          "n": 2,
+          "accuracy": 1.0
+        },
+        "dependency_unavailable": {
+          "n": 1,
+          "accuracy": 1.0
+        },
+        "memory_leak": {
+          "n": 5,
+          "accuracy": 0.8
+        },
+        "network_latency": {
+          "n": 2,
+          "accuracy": 1.0
+        },
+        "probe_failure": {
+          "n": 1,
+          "accuracy": 1.0
+        },
+        "queue_backlog": {
+          "n": 1,
+          "accuracy": 1.0
+        },
+        "resource_exhaustion": {
+          "n": 1,
+          "accuracy": 1.0
+        }
+      },
+      "calibration": {
+        "confident_n": 25,
+        "confident_accuracy": 0.96,
+        "unsure_n": 1,
+        "unsure_accuracy": 1.0
+      }
+    },
+    "finished_at": "2026-09-30T02:43:01.891270+00:00"
+  },
+  {
+    "id": "0ba3064bf7",
+    "created_at": "2026-09-30T02:43:01.891648+00:00",
+    "status": "completed",
+    "reasoner": "claude",
+    "requested_reasoner": "claude",
+    "model": "claude-sonnet-4-5",
+    "scenario_ids": [
+      "payment-bad-deploy",
+      "payment-failure-flag",
+      "checkout-payment-unreachable",
+      "payment-scaled-to-zero",
+      "cart-pool-exhaustion",
+      "valkey-slow",
+      "recommendation-memory-leak",
+      "email-memory-leak",
+      "ad-high-cpu",
+      "ad-failure-flag-with-deploy-noise",
+      "product-catalog-flag",
+      "product-catalog-slow-release",
+      "postgres-slow-accounting-lag",
+      "kafka-queue-problems",
+      "fraud-detection-crashloop",
+      "currency-crashloop-release",
+      "quote-network-latency",
+      "cart-readiness-probe",
+      "checkout-memory-leak-payment-noise",
+      "image-provider-slow",
+      "shipping-bad-quote-addr",
+      "payment-cpu-limit",
+      "product-catalog-oom",
+      "currency-latency-regression",
+      "fraud-detection-slow-leak",
+      "frontend-bad-deploy"
+    ],
+    "results": [
+      {
+        "scenario_id": "payment-bad-deploy",
+        "title": "Payment release throws on every other charge",
+        "difficulty": "easy",
+        "investigation_id": "b04b017e82f5",
+        "status": "completed",
+        "duration_ms": 27658,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "payment",
+          "expected_category": "bad_deploy",
+          "predicted_service": "payment",
+          "predicted_category": "bad_deploy",
+          "confidence": 0.95
+        },
+        "predicted": "payment/bad_deploy",
+        "expected": "payment/bad_deploy",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "payment-failure-flag",
+        "title": "Feature flag makes payment fail 25% of charges",
+        "difficulty": "easy",
+        "investigation_id": "6ccb02341c93",
+        "status": "completed",
+        "duration_ms": 28321,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "payment",
+          "expected_category": "config_change",
+          "predicted_service": "payment",
+          "predicted_category": "config_change",
+          "confidence": 0.95
+        },
+        "predicted": "payment/config_change",
+        "expected": "payment/config_change",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "checkout-payment-unreachable",
+        "title": "Checkout points at a payment address that doesn't exist",
+        "difficulty": "medium",
+        "investigation_id": "57220579296d",
+        "status": "completed",
+        "duration_ms": 30623,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "checkout",
+          "expected_category": "config_change",
+          "predicted_service": "checkout",
+          "predicted_category": "config_change",
+          "confidence": 0.95
+        },
+        "predicted": "checkout/config_change",
+        "expected": "checkout/config_change",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "payment-scaled-to-zero",
+        "title": "Payment deployment scaled to zero replicas",
+        "difficulty": "medium",
+        "investigation_id": "f01110fadc3e",
+        "status": "completed",
+        "duration_ms": 25733,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "payment",
+          "expected_category": "dependency_unavailable",
+          "predicted_service": "payment",
+          "predicted_category": "dependency_unavailable",
+          "confidence": 0.95
+        },
+        "predicted": "payment/dependency_unavailable",
+        "expected": "payment/dependency_unavailable",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "cart-pool-exhaustion",
+        "title": "Cart exhausts its Valkey connection pool",
+        "difficulty": "medium",
+        "investigation_id": "9fcf8390712f",
+        "status": "completed",
+        "duration_ms": 29367,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "cart",
+          "expected_category": "resource_exhaustion",
+          "predicted_service": "cart",
+          "predicted_category": "resource_exhaustion",
+          "confidence": 0.92
+        },
+        "predicted": "cart/resource_exhaustion",
+        "expected": "cart/resource_exhaustion",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "valkey-slow",
+        "title": "Valkey (cart cache) responding slowly",
+        "difficulty": "medium",
+        "investigation_id": "904261cf15da",
+        "status": "completed",
+        "duration_ms": 31737,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "valkey-cart",
+          "expected_category": "datastore_degradation",
+          "predicted_service": "valkey-cart",
+          "predicted_category": "datastore_degradation",
+          "confidence": 0.88
+        },
+        "predicted": "valkey-cart/datastore_degradation",
+        "expected": "valkey-cart/datastore_degradation",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "recommendation-memory-leak",
+        "title": "Recommendation cache leaks memory and gets OOMKilled",
+        "difficulty": "easy",
+        "investigation_id": "ef180b37e925",
+        "status": "completed",
+        "duration_ms": 30558,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "recommendation",
+          "expected_category": "memory_leak",
+          "predicted_service": "recommendation",
+          "predicted_category": "memory_leak",
+          "confidence": 0.92
+        },
+        "predicted": "recommendation/memory_leak",
+        "expected": "recommendation/memory_leak",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "email-memory-leak",
+        "title": "Email service leaks memory, slowing checkout",
+        "difficulty": "medium",
+        "investigation_id": "ef5da9f88833",
+        "status": "completed",
+        "duration_ms": 26823,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "email",
+          "expected_category": "memory_leak",
+          "predicted_service": "email",
+          "predicted_category": "memory_leak",
+          "confidence": 0.9
+        },
+        "predicted": "email/memory_leak",
+        "expected": "email/memory_leak",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "ad-high-cpu",
+        "title": "Ad service CPU pinned at its limit",
+        "difficulty": "easy",
+        "investigation_id": "0a74ce12439e",
+        "status": "completed",
+        "duration_ms": 31736,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "ad",
+          "expected_category": "cpu_saturation",
+          "predicted_service": "ad",
+          "predicted_category": "cpu_saturation",
+          "confidence": 0.92
+        },
+        "predicted": "ad/cpu_saturation",
+        "expected": "ad/cpu_saturation",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "ad-failure-flag-with-deploy-noise",
+        "title": "Ad failures right after an unrelated recommendation deploy",
+        "difficulty": "medium",
+        "investigation_id": "e681be1f49d8",
+        "status": "completed",
+        "duration_ms": 30752,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "ad",
+          "expected_category": "config_change",
+          "predicted_service": "ad",
+          "predicted_category": "config_change",
+          "confidence": 0.95
+        },
+        "predicted": "ad/config_change",
+        "expected": "ad/config_change",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "product-catalog-flag",
+        "title": "Product catalog fails for a single product",
+        "difficulty": "medium",
+        "investigation_id": "c5d6579dd28a",
+        "status": "completed",
+        "duration_ms": 26724,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "product-catalog",
+          "expected_category": "config_change",
+          "predicted_service": "product-catalog",
+          "predicted_category": "config_change",
+          "confidence": 0.95
+        },
+        "predicted": "product-catalog/config_change",
+        "expected": "product-catalog/config_change",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "product-catalog-slow-release",
+        "title": "Product catalog release adds an N+1 query (frontend deploy is a red herring)",
+        "difficulty": "hard",
+        "investigation_id": "aa9a9fb82fab",
+        "status": "completed",
+        "duration_ms": 32560,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "product-catalog",
+          "expected_category": "bad_deploy",
+          "predicted_service": "product-catalog",
+          "predicted_category": "bad_deploy",
+          "confidence": 0.85
+        },
+        "predicted": "product-catalog/bad_deploy",
+        "expected": "product-catalog/bad_deploy",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "postgres-slow-accounting-lag",
+        "title": "Slow Postgres makes the accounting consumer fall behind",
+        "difficulty": "hard",
+        "investigation_id": "a674978df8be",
+        "status": "completed",
+        "duration_ms": 35553,
+        "grading": {
+          "service_correct": true,
+          "category_correct": false,
+          "correct": false,
+          "service_in_top3": true,
+          "score": 0.5,
+          "expected_service": "postgresql",
+          "expected_category": "datastore_degradation",
+          "predicted_service": "postgresql",
+          "predicted_category": "cpu_saturation",
+          "confidence": 0.85
+        },
+        "predicted": "postgresql/cpu_saturation",
+        "expected": "postgresql/datastore_degradation",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "kafka-queue-problems",
+        "title": "Accounting consumer can't keep up with Kafka",
+        "difficulty": "medium",
+        "investigation_id": "14acd13eecee",
+        "status": "completed",
+        "duration_ms": 32356,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "accounting",
+          "expected_category": "queue_backlog",
+          "predicted_service": "accounting",
+          "predicted_category": "queue_backlog",
+          "confidence": 0.65
+        },
+        "predicted": "accounting/queue_backlog",
+        "expected": "accounting/queue_backlog",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "fraud-detection-crashloop",
+        "title": "Fraud detection crash-loops after a Kafka address change",
+        "difficulty": "medium",
+        "investigation_id": "c293cabb422a",
+        "status": "completed",
+        "duration_ms": 21387,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "fraud-detection",
+          "expected_category": "crash_loop",
+          "predicted_service": "fraud-detection",
+          "predicted_category": "config_change",
+          "confidence": 0.95
+        },
+        "predicted": "fraud-detection/config_change",
+        "expected": "fraud-detection/crash_loop",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "currency-crashloop-release",
+        "title": "Currency release crash-loops on start-up",
+        "difficulty": "medium",
+        "investigation_id": "d653219b2d23",
+        "status": "completed",
+        "duration_ms": 29078,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "currency",
+          "expected_category": "crash_loop",
+          "predicted_service": "currency",
+          "predicted_category": "crash_loop",
+          "confidence": 0.95
+        },
+        "predicted": "currency/crash_loop",
+        "expected": "currency/crash_loop",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "quote-network-latency",
+        "title": "Network latency between shipping and quote",
+        "difficulty": "medium",
+        "investigation_id": "838511220169",
+        "status": "completed",
+        "duration_ms": 36021,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "quote",
+          "expected_category": "network_latency",
+          "predicted_service": "quote",
+          "predicted_category": "network_latency",
+          "confidence": 0.75
+        },
+        "predicted": "quote/network_latency",
+        "expected": "quote/network_latency",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "cart-readiness-probe",
+        "title": "Cart readiness probe fails, half its endpoints are pulled",
+        "difficulty": "medium",
+        "investigation_id": "fd5d850bd1ec",
+        "status": "completed",
+        "duration_ms": 31845,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "cart",
+          "expected_category": "probe_failure",
+          "predicted_service": "cart",
+          "predicted_category": "probe_failure",
+          "confidence": 0.85
+        },
+        "predicted": "cart/probe_failure",
+        "expected": "cart/probe_failure",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "checkout-memory-leak-payment-noise",
+        "title": "Checkout leaks memory; a payment deploy 6 minutes earlier is a red herring",
+        "difficulty": "hard",
+        "investigation_id": "81603de638f1",
+        "status": "completed",
+        "duration_ms": 30097,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "checkout",
+          "expected_category": "memory_leak",
+          "predicted_service": "checkout",
+          "predicted_category": "memory_leak",
+          "confidence": 0.92
+        },
+        "predicted": "checkout/memory_leak",
+        "expected": "checkout/memory_leak",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "image-provider-slow",
+        "title": "Image provider injects a delay into every image",
+        "difficulty": "easy",
+        "investigation_id": "ecae2db76227",
+        "status": "completed",
+        "duration_ms": 31203,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "image-provider",
+          "expected_category": "network_latency",
+          "predicted_service": "image-provider",
+          "predicted_category": "network_latency",
+          "confidence": 0.85
+        },
+        "predicted": "image-provider/network_latency",
+        "expected": "image-provider/network_latency",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "shipping-bad-quote-addr",
+        "title": "Shipping config points at the wrong quote service",
+        "difficulty": "medium",
+        "investigation_id": "c022e64a0a8f",
+        "status": "completed",
+        "duration_ms": 30511,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "shipping",
+          "expected_category": "config_change",
+          "predicted_service": "shipping",
+          "predicted_category": "config_change",
+          "confidence": 0.95
+        },
+        "predicted": "shipping/config_change",
+        "expected": "shipping/config_change",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "payment-cpu-limit",
+        "title": "Payment CPU limit cut to 50m, requests queue up",
+        "difficulty": "medium",
+        "investigation_id": "e802dc55a292",
+        "status": "completed",
+        "duration_ms": 27746,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "payment",
+          "expected_category": "cpu_saturation",
+          "predicted_service": "payment",
+          "predicted_category": "config_change",
+          "confidence": 0.95
+        },
+        "predicted": "payment/config_change",
+        "expected": "payment/cpu_saturation",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "product-catalog-oom",
+        "title": "Product catalog OOMKilled under a smaller memory limit",
+        "difficulty": "medium",
+        "investigation_id": "07fbf03f2fe2",
+        "status": "completed",
+        "duration_ms": 29355,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "product-catalog",
+          "expected_category": "memory_leak",
+          "predicted_service": "product-catalog",
+          "predicted_category": "memory_leak",
+          "confidence": 0.92
+        },
+        "predicted": "product-catalog/memory_leak",
+        "expected": "product-catalog/memory_leak",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "currency-latency-regression",
+        "title": "Currency release makes every conversion ~900ms slower (no errors)",
+        "difficulty": "hard",
+        "investigation_id": "133e8cab051b",
+        "status": "completed",
+        "duration_ms": 31316,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "currency",
+          "expected_category": "bad_deploy",
+          "predicted_service": "currency",
+          "predicted_category": "bad_deploy",
+          "confidence": 0.92
+        },
+        "predicted": "currency/bad_deploy",
+        "expected": "currency/bad_deploy",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "fraud-detection-slow-leak",
+        "title": "Fraud detection leaks memory slowly - GC thrash, no OOM yet",
+        "difficulty": "hard",
+        "investigation_id": "fd68f8775c60",
+        "status": "completed",
+        "duration_ms": 24880,
+        "grading": {
+          "service_correct": true,
+          "category_correct": false,
+          "correct": false,
+          "service_in_top3": true,
+          "score": 0.5,
+          "expected_service": "fraud-detection",
+          "expected_category": "memory_leak",
+          "predicted_service": "fraud-detection",
+          "predicted_category": "queue_backlog",
+          "confidence": 0.82
+        },
+        "predicted": "fraud-detection/queue_backlog",
+        "expected": "fraud-detection/memory_leak",
+        "reasoner_used": "claude",
+        "error": null
+      },
+      {
+        "scenario_id": "frontend-bad-deploy",
+        "title": "Frontend release breaks product pages for some currencies",
+        "difficulty": "medium",
+        "investigation_id": "eb50bc908e8a",
+        "status": "completed",
+        "duration_ms": 31330,
+        "grading": {
+          "service_correct": true,
+          "category_correct": true,
+          "correct": true,
+          "service_in_top3": true,
+          "score": 1.0,
+          "expected_service": "frontend",
+          "expected_category": "bad_deploy",
+          "predicted_service": "frontend",
+          "predicted_category": "bad_deploy",
+          "confidence": 0.92
+        },
+        "predicted": "frontend/bad_deploy",
+        "expected": "frontend/bad_deploy",
+        "reasoner_used": "claude",
+        "error": null
+      }
+    ],
+    "summary": {
+      "n": 26,
+      "completed": 26,
+      "accuracy": 0.923,
+      "service_accuracy": 1.0,
+      "category_accuracy": 0.923,
+      "service_recall_at_3": 1.0,
+      "mean_score": 0.962,
+      "median_time_to_hypothesis_ms": 30534,
+      "p95_time_to_hypothesis_ms": 32560,
+      "by_difficulty": {
+        "easy": {
+          "n": 5,
+          "accuracy": 1.0
+        },
+        "hard": {
+          "n": 5,
+          "accuracy": 0.6
+        },
+        "medium": {
+          "n": 16,
+          "accuracy": 1.0
+        }
+      },
+      "by_category": {
+        "bad_deploy": {
+          "n": 4,
+          "accuracy": 1.0
+        },
+        "config_change": {
+          "n": 5,
+          "accuracy": 1.0
+        },
+        "cpu_saturation": {
+          "n": 2,
+          "accuracy": 1.0
+        },
+        "crash_loop": {
+          "n": 2,
+          "accuracy": 1.0
+        },
+        "datastore_degradation": {
+          "n": 2,
+          "accuracy": 0.5
+        },
+        "dependency_unavailable": {
+          "n": 1,
+          "accuracy": 1.0
+        },
+        "memory_leak": {
+          "n": 5,
+          "accuracy": 0.8
+        },
+        "network_latency": {
+          "n": 2,
+          "accuracy": 1.0
+        },
+        "probe_failure": {
+          "n": 1,
+          "accuracy": 1.0
+        },
+        "queue_backlog": {
+          "n": 1,
+          "accuracy": 1.0
+        },
+        "resource_exhaustion": {
+          "n": 1,
+          "accuracy": 1.0
+        }
+      },
+      "calibration": {
+        "confident_n": 25,
+        "confident_accuracy": 0.92,
+        "unsure_n": 1,
+        "unsure_accuracy": 1.0
+      }
+    },
+    "finished_at": "2026-09-30T02:46:32.032014+00:00"
+  }
+]

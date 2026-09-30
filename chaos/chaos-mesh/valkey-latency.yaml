@@ -1,0 +1,18 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: valkey-latency
+  namespace: otel-demo
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces: [otel-demo]
+    labelSelectors:
+      app.kubernetes.io/name: valkey-cart
+  delay:
+    latency: "850ms"
+    jitter: "100ms"
+    correlation: "25"
+  direction: to
+  duration: "30m"
